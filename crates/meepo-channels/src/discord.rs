@@ -16,6 +16,8 @@ use tracing::{info, error, debug, warn};
 use chrono::Utc;
 use tokio::sync::RwLock;
 
+const MAX_MESSAGE_CHANNELS: usize = 1000;
+
 /// Type key for storing the incoming message sender in Serenity's TypeMap
 struct MessageSender;
 
@@ -28,6 +30,13 @@ struct UserChannelMap;
 
 impl TypeMapKey for UserChannelMap {
     type Value = Arc<DashMap<UserId, ChannelId>>;
+}
+
+/// Type key for storing message_id -> channel_id mapping for replies
+struct MessageChannelMap;
+
+impl TypeMapKey for MessageChannelMap {
+    type Value = Arc<DashMap<String, ChannelId>>;
 }
 
 /// Type key for storing allowed users
@@ -57,7 +66,13 @@ impl EventHandler for DiscordHandler {
 
         // Check if user is allowed
         let data = ctx.data.read().await;
-        let allowed_users = data.get::<AllowedUsers>().unwrap();
+        let allowed_users = match data.get::<AllowedUsers>() {
+            Some(users) => users,
+            None => {
+                error!("AllowedUsers not initialized in TypeMap");
+                return;
+            }
+        };
 
         if !allowed_users.contains(&msg.author.id) {
             warn!("Ignoring DM from unauthorized user: {}", msg.author.id);
@@ -65,18 +80,31 @@ impl EventHandler for DiscordHandler {
         }
 
         // Store the channel mapping for replies
-        let user_channel_map = data.get::<UserChannelMap>().unwrap();
+        let user_channel_map = data.get::<UserChannelMap>().expect("UserChannelMap not initialized");
         user_channel_map.insert(msg.author.id, msg.channel_id);
 
+        // Store message_id -> channel_id mapping for reply tracking
+        let message_channel_map = data.get::<MessageChannelMap>().expect("MessageChannelMap not initialized");
+        let msg_id = format!("discord_{}", msg.id);
+        message_channel_map.insert(msg_id.clone(), msg.channel_id);
+
+        // Bound the map size to prevent unbounded growth
+        if message_channel_map.len() > MAX_MESSAGE_CHANNELS {
+            // Remove oldest entry
+            if let Some(first_key) = message_channel_map.iter().next().map(|e| e.key().clone()) {
+                message_channel_map.remove(&first_key);
+            }
+        }
+
         // Get the message sender
-        let tx = data.get::<MessageSender>().unwrap().clone();
+        let tx = data.get::<MessageSender>().expect("MessageSender not initialized").clone();
         drop(data); // Release the lock
 
         // Convert to IncomingMessage
         let incoming = IncomingMessage {
-            id: format!("discord_{}", msg.id),
+            id: msg_id,
             sender: match msg.author.discriminator {
-                Some(d) => format!("{}#{}", msg.author.name, d),
+                Some(d) => format!("{}#{:04}", msg.author.name, d),
                 None => msg.author.name.clone(),
             },
             content: msg.content.clone(),
@@ -103,6 +131,8 @@ pub struct DiscordChannel {
     allowed_users: Vec<String>, // Discord user IDs to accept DMs from
     http: Arc<RwLock<Option<Arc<serenity::http::Http>>>>,
     user_channel_map: Arc<DashMap<UserId, ChannelId>>,
+    /// Maps message_id -> channel_id for reply-to tracking
+    message_channels: Arc<DashMap<String, ChannelId>>,
 }
 
 impl DiscordChannel {
@@ -117,6 +147,7 @@ impl DiscordChannel {
             allowed_users,
             http: Arc::new(RwLock::new(None)),
             user_channel_map: Arc::new(DashMap::new()),
+            message_channels: Arc::new(DashMap::new()),
         }
     }
 
@@ -159,6 +190,7 @@ impl MessageChannel for DiscordChannel {
             let mut data = client.data.write().await;
             data.insert::<MessageSender>(tx);
             data.insert::<UserChannelMap>(self.user_channel_map.clone());
+            data.insert::<MessageChannelMap>(self.message_channels.clone());
             data.insert::<AllowedUsers>(user_ids);
         }
 
@@ -191,39 +223,31 @@ impl MessageChannel for DiscordChannel {
 
         debug!("Sending Discord message");
 
-        // Extract user ID from reply_to if present
-        let user_id = if let Some(_reply_to) = msg.reply_to {
-            // Parse the message ID format: "discord_{message_id}"
-            // But we actually need the user ID, which we should have in our map
-            // For now, we'll need to search through our map
-            // In production, we'd want a better message ID format that includes user info
-
-            // Try to find the channel from our map
-            // This is a simplified approach - in production, we'd want better tracking
-            if let Some(entry) = self.user_channel_map.iter().next() {
-                Some((*entry.key(), *entry.value()))
+        // Look up channel from reply_to if present
+        let channel_id = if let Some(reply_to) = &msg.reply_to {
+            // Look up the channel from our message_channels map
+            if let Some(channel) = self.message_channels.get(reply_to) {
+                debug!("Found channel from reply_to: {}", reply_to);
+                Some(*channel.value())
             } else {
-                warn!("No Discord channel mapping found for reply");
-                return Err(anyhow!("No Discord channel mapping available"));
+                // reply_to not found, fall back to first available channel
+                warn!("reply_to '{}' not found in message tracking, falling back to first available channel", reply_to);
+                self.user_channel_map.iter().next().map(|entry| *entry.value())
             }
         } else {
-            // If no reply_to, use the first available mapping (for broadcast)
-            if let Some(entry) = self.user_channel_map.iter().next() {
-                Some((*entry.key(), *entry.value()))
-            } else {
-                return Err(anyhow!("No Discord users have messaged the bot yet"));
-            }
+            // No reply_to specified, use first available channel
+            self.user_channel_map.iter().next().map(|entry| *entry.value())
         };
 
-        if let Some((_user_id, channel_id)) = user_id {
+        if let Some(channel_id) = channel_id {
             // Send the message
             channel_id.say(http, &msg.content).await
                 .map_err(|e| anyhow!("Failed to send Discord message: {}", e))?;
 
-            info!("Discord message sent successfully");
+            info!("Discord message sent successfully to channel {}", channel_id);
             Ok(())
         } else {
-            Err(anyhow!("No Discord channel available"))
+            Err(anyhow!("No Discord users have messaged the bot yet"))
         }
     }
 

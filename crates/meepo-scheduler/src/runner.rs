@@ -571,11 +571,15 @@ tell application "Mail"
 end tell
 "#;
 
-            let output = Command::new("osascript")
-                .arg("-e")
-                .arg(script)
-                .output()
-                .await?;
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg(script)
+                    .output()
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))??;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -677,11 +681,15 @@ end tell
                 days_ahead
             );
 
-            let output = Command::new("osascript")
-                .arg("-e")
-                .arg(&script)
-                .output()
-                .await?;
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg(&script)
+                    .output()
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))??;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);

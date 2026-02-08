@@ -8,6 +8,19 @@ use tracing::{debug, warn};
 
 use super::{ToolHandler, json_schema};
 
+/// Sanitize a string for safe use in AppleScript
+/// Prevents injection attacks by escaping special characters
+pub(crate) fn sanitize_applescript_string(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")  // Escape backslashes first
+        .replace('"', "\\\"")   // Escape double quotes
+        .replace('\n', " ")     // Replace newlines with spaces
+        .replace('\r', " ")     // Replace carriage returns with spaces
+        .chars()
+        .filter(|&c| c >= ' ' || c == '\t')  // Remove control characters except tab
+        .collect()
+}
+
 /// Read emails from Mail.app
 pub struct ReadEmailsTool;
 
@@ -59,12 +72,16 @@ tell application "Mail"
 end tell
 "#, limit);
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -129,12 +146,16 @@ tell application "Calendar"
 end tell
 "#, days_ahead);
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -193,6 +214,11 @@ impl ToolHandler for SendEmailTool {
 
         debug!("Sending email to: {}", to);
 
+        // Sanitize inputs to prevent AppleScript injection
+        let safe_to = sanitize_applescript_string(to);
+        let safe_subject = sanitize_applescript_string(subject);
+        let safe_body = sanitize_applescript_string(body);
+
         let script = format!(r#"
 tell application "Mail"
     try
@@ -206,14 +232,18 @@ tell application "Mail"
         return "Error: " & errMsg
     end try
 end tell
-"#, subject.replace('"', "\\\""), body.replace('"', "\\\""), to);
+"#, safe_subject, safe_body, safe_to);
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -272,6 +302,10 @@ impl ToolHandler for CreateEventTool {
 
         debug!("Creating calendar event: {}", summary);
 
+        // Sanitize inputs to prevent AppleScript injection
+        let safe_summary = sanitize_applescript_string(summary);
+        let safe_start_time = sanitize_applescript_string(start_time);
+
         let script = format!(r#"
 tell application "Calendar"
     try
@@ -285,14 +319,18 @@ tell application "Calendar"
         return "Error: " & errMsg
     end try
 end tell
-"#, start_time, duration, summary.replace('"', "\\\""));
+"#, safe_start_time, duration, safe_summary);
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("AppleScript execution timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -337,12 +375,16 @@ impl ToolHandler for OpenAppTool {
 
         debug!("Opening application: {}", app_name);
 
-        let output = Command::new("open")
-            .arg("-a")
-            .arg(app_name)
-            .output()
-            .await
-            .context("Failed to execute open command")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("open")
+                .arg("-a")
+                .arg(app_name)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Command execution timed out after 30 seconds"))?
+        .context("Failed to execute open command")?;
 
         if output.status.success() {
             Ok(format!("Successfully opened {}", app_name))
@@ -374,10 +416,14 @@ impl ToolHandler for GetClipboardTool {
     async fn execute(&self, _input: Value) -> Result<String> {
         debug!("Reading clipboard content");
 
-        let output = Command::new("pbpaste")
-            .output()
-            .await
-            .context("Failed to execute pbpaste")?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("pbpaste")
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Command execution timed out after 30 seconds"))?
+        .context("Failed to execute pbpaste")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -448,6 +494,29 @@ mod tests {
     fn test_get_clipboard_schema() {
         let tool = GetClipboardTool;
         assert_eq!(tool.name(), "get_clipboard");
+    }
+
+    #[test]
+    fn test_sanitize_applescript_string() {
+        // Test backslash escaping
+        assert_eq!(sanitize_applescript_string("test\\path"), "test\\\\path");
+
+        // Test quote escaping
+        assert_eq!(sanitize_applescript_string("test\"quote"), "test\\\"quote");
+
+        // Test newline replacement
+        assert_eq!(sanitize_applescript_string("test\nline"), "test line");
+        assert_eq!(sanitize_applescript_string("test\rline"), "test line");
+
+        // Test control character removal
+        let with_control = "test\x01\x02\x03text";
+        assert_eq!(sanitize_applescript_string(with_control), "testtext");
+
+        // Test combined attack string
+        let attack = "test\"; do shell script \"rm -rf /\" --\"";
+        let safe = sanitize_applescript_string(attack);
+        assert!(!safe.contains('\n'));
+        assert!(safe.contains("\\\""));
     }
 
     #[tokio::test]

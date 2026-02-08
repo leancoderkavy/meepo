@@ -46,7 +46,34 @@ impl ToolHandler for RunCommandTool {
             .and_then(|v| v.as_str())
             .unwrap_or(".");
 
-        // Safety checks
+        // Maximum command length check
+        const MAX_COMMAND_LENGTH: usize = 1000;
+        if command.len() > MAX_COMMAND_LENGTH {
+            warn!("Blocked command exceeding max length: {} chars", command.len());
+            return Err(anyhow::anyhow!("Command exceeds maximum length of {} characters", MAX_COMMAND_LENGTH));
+        }
+
+        // Allowlist of safe commands
+        const ALLOWED_COMMANDS: &[&str] = &[
+            "ls", "cat", "head", "tail", "wc", "echo", "date", "whoami", "uname",
+            "pwd", "which", "file", "stat", "du", "df", "uptime", "ps", "env",
+            "printenv", "hostname", "id", "groups", "grep", "find", "sort", "uniq",
+            "cut", "awk", "sed", "tr", "basename", "dirname", "realpath", "readlink",
+        ];
+
+        // Extract the first command word (before spaces, pipes, semicolons, etc.)
+        let first_word = command
+            .split(&[' ', '|', ';', '&', '\n', '\t'][..])
+            .find(|s| !s.is_empty())
+            .unwrap_or("");
+
+        // Check if the command is in the allowlist
+        if !ALLOWED_COMMANDS.contains(&first_word) {
+            warn!("Blocked command not in allowlist: {}", first_word);
+            return Err(anyhow::anyhow!("Command '{}' is not in the allowlist of safe commands", first_word));
+        }
+
+        // Secondary blocklist check for extra safety
         let dangerous_patterns = [
             "rm -rf /",
             "rm -rf /*",
@@ -66,13 +93,18 @@ impl ToolHandler for RunCommandTool {
 
         debug!("Running command: {} (in {})", command, working_dir);
 
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(working_dir)
-            .output()
-            .await
-            .context("Failed to execute command")?;
+        // Execute with timeout
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .current_dir(working_dir)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Command execution timed out after 30 seconds"))?
+        .context("Failed to execute command")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -235,10 +267,15 @@ impl ToolHandler for BrowseUrlTool {
 
         let mut request = client.get(url);
 
-        // Add custom headers if provided
+        // Add custom headers if provided (with CRLF injection protection)
         if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
             for (key, value) in headers {
                 if let Some(value_str) = value.as_str() {
+                    // Validate that header name and value don't contain CRLF sequences
+                    if key.contains('\r') || key.contains('\n') || value_str.contains('\r') || value_str.contains('\n') {
+                        warn!("Skipping header '{}' due to CRLF characters", key);
+                        continue;
+                    }
                     request = request.header(key, value_str);
                 }
             }
@@ -324,6 +361,38 @@ mod tests {
             "command": "rm -rf /"
         })).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_command_blocks_not_allowlisted() {
+        let tool = RunCommandTool;
+        // curl is not in the allowlist
+        let result = tool.execute(serde_json::json!({
+            "command": "curl http://example.com"
+        })).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not in the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn test_run_command_blocks_too_long() {
+        let tool = RunCommandTool;
+        let long_command = "echo ".to_string() + &"A".repeat(1001);
+        let result = tool.execute(serde_json::json!({
+            "command": long_command
+        })).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum length"));
+    }
+
+    #[tokio::test]
+    async fn test_run_command_safe_command_works() {
+        let tool = RunCommandTool;
+        let result = tool.execute(serde_json::json!({
+            "command": "ls -la"
+        })).await;
+        // ls should be allowed and work
+        assert!(result.is_ok() || result.unwrap_err().to_string().contains("Failed to execute"));
     }
 
     #[tokio::test]

@@ -13,6 +13,9 @@ use chrono::Utc;
 use tokio::process::Command;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use dashmap::DashMap;
+
+const MAX_MESSAGE_SENDERS: usize = 1000;
 
 /// iMessage channel adapter
 pub struct IMessageChannel {
@@ -21,6 +24,8 @@ pub struct IMessageChannel {
     allowed_contacts: Vec<String>,
     db_path: PathBuf,
     last_rowid: Arc<RwLock<Option<i64>>>,
+    /// Maps message_id -> sender contact for reply-to tracking
+    message_senders: Arc<DashMap<String, String>>,
 }
 
 impl IMessageChannel {
@@ -49,6 +54,7 @@ impl IMessageChannel {
             allowed_contacts,
             db_path,
             last_rowid: Arc::new(RwLock::new(None)),
+            message_senders: Arc::new(DashMap::new()),
         }
     }
 
@@ -153,8 +159,22 @@ impl IMessageChannel {
         // Now send messages asynchronously
         let message_count = pending_messages.len();
         for (rowid, handle, content, timestamp) in pending_messages {
+            let msg_id = format!("imessage_{}", rowid);
+
+            // Store message_id -> sender mapping for reply-to tracking
+            self.message_senders.insert(msg_id.clone(), handle.clone());
+
+            // Bound the map size to prevent unbounded growth
+            if self.message_senders.len() > MAX_MESSAGE_SENDERS {
+                // Remove oldest entries (simple approach: clear when over limit)
+                // In production, consider using a LRU cache
+                if let Some(first_key) = self.message_senders.iter().next().map(|e| e.key().clone()) {
+                    self.message_senders.remove(&first_key);
+                }
+            }
+
             let incoming = IncomingMessage {
-                id: format!("imessage_{}", rowid),
+                id: msg_id,
                 sender: handle.clone(),
                 content: content.clone(),
                 channel: ChannelType::IMessage,
@@ -243,6 +263,7 @@ impl MessageChannel for IMessageChannel {
         let db_path = self.db_path.clone();
         let trigger_prefix = self.trigger_prefix.clone();
         let allowed_contacts = self.allowed_contacts.clone();
+        let message_senders = self.message_senders.clone();
 
         // Create a new channel instance for the task
         let channel = IMessageChannel {
@@ -251,6 +272,7 @@ impl MessageChannel for IMessageChannel {
             allowed_contacts,
             db_path,
             last_rowid,
+            message_senders,
         };
 
         // Spawn polling task
@@ -275,27 +297,31 @@ impl MessageChannel for IMessageChannel {
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
         debug!("Sending iMessage");
 
-        // Extract recipient from reply_to
-        // The message ID format is "imessage_{rowid}", but we need the actual recipient
-        // This is a limitation - we need to track sender info separately
-        // For now, we'll require the recipient in a different way
+        // Look up recipient from reply_to message tracking
+        let recipient = if let Some(reply_to) = &msg.reply_to {
+            // Look up the sender from our message_senders map
+            if let Some(sender) = self.message_senders.get(reply_to) {
+                debug!("Found recipient from reply_to: {}", sender.value());
+                sender.value().clone()
+            } else {
+                // reply_to not found in map, fall back to first allowed contact
+                warn!("reply_to '{}' not found in message tracking, falling back to first allowed contact", reply_to);
+                if self.allowed_contacts.is_empty() {
+                    return Err(anyhow!("No allowed contacts configured for iMessage"));
+                }
+                self.allowed_contacts[0].clone()
+            }
+        } else {
+            // No reply_to specified, use first allowed contact
+            if self.allowed_contacts.is_empty() {
+                return Err(anyhow!("No allowed contacts configured for iMessage"));
+            }
+            self.allowed_contacts[0].clone()
+        };
 
-        // In a real implementation, we'd want to:
-        // 1. Store a mapping of message IDs to senders when we receive messages
-        // 2. Look up the sender from the reply_to field
-        // For this initial version, we'll just send to the first allowed contact
+        self.send_imessage(&recipient, &msg.content).await?;
 
-        if self.allowed_contacts.is_empty() {
-            return Err(anyhow!("No allowed contacts configured for iMessage"));
-        }
-
-        // Use the first allowed contact as recipient
-        // In production, this should be improved to track actual conversations
-        let recipient = &self.allowed_contacts[0];
-
-        self.send_imessage(recipient, &msg.content).await?;
-
-        info!("iMessage sent successfully");
+        info!("iMessage sent successfully to {}", recipient);
         Ok(())
     }
 
@@ -313,6 +339,30 @@ mod tests {
         assert_eq!(
             IMessageChannel::normalize_contact("+1 (555) 123-4567"),
             "15551234567"
+        );
+    }
+
+    #[test]
+    fn test_message_sender_tracking() {
+        let channel = IMessageChannel::new(
+            Duration::from_secs(3),
+            "/d".to_string(),
+            vec!["+1-555-123-4567".to_string()],
+            None,
+        );
+
+        // Simulate adding message sender mappings
+        channel.message_senders.insert("imessage_123".to_string(), "+15551234567".to_string());
+        channel.message_senders.insert("imessage_456".to_string(), "+15559999999".to_string());
+
+        // Verify lookups work
+        assert_eq!(
+            channel.message_senders.get("imessage_123").unwrap().value(),
+            "+15551234567"
+        );
+        assert_eq!(
+            channel.message_senders.get("imessage_456").unwrap().value(),
+            "+15559999999"
         );
     }
 

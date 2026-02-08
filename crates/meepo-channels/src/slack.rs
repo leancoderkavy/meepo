@@ -144,12 +144,14 @@ impl MessageChannel for SlackChannel {
         }
 
         // Clone data for the polling task
+        // Note: Discovery (auth.test + conversations.list) is complete before spawning,
+        // preventing race conditions where messages arrive before bot_user_id is set
         let token = self.bot_token.clone();
         let poll_interval = self.poll_interval;
         let channel_map = self.channel_map.clone();
         let bot_uid = bot_user_id;
 
-        // Spawn polling task
+        // Spawn polling task (safe: all initialization is complete)
         tokio::spawn(async move {
             info!("Slack polling task started");
             let client = reqwest::Client::new();

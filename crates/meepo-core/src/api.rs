@@ -17,6 +17,27 @@ pub struct ApiClient {
     max_tokens: u32,
 }
 
+impl std::fmt::Debug for ApiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Mask the API key in debug output
+        let masked_key = if self.api_key.len() > 7 {
+            format!("{}...{}",
+                &self.api_key[..3],
+                &self.api_key[self.api_key.len()-4..])
+        } else {
+            "***".to_string()
+        };
+
+        f.debug_struct("ApiClient")
+            .field("client", &"<reqwest::Client>")
+            .field("api_key", &masked_key)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
+}
+
 impl ApiClient {
     /// Create a new API client
     pub fn new(api_key: String, model: Option<String>) -> Self {
@@ -260,5 +281,27 @@ mod tests {
         };
         let json = serde_json::to_string(&block).unwrap();
         assert!(json.contains("text"));
+    }
+
+    #[test]
+    fn test_api_client_debug_masks_key() {
+        let client = ApiClient::new("sk-ant-1234567890abcdef".to_string(), None);
+        let debug_output = format!("{:?}", client);
+
+        // Should contain masked version
+        assert!(debug_output.contains("sk-...cdef"));
+
+        // Should NOT contain the full key
+        assert!(!debug_output.contains("sk-ant-1234567890abcdef"));
+    }
+
+    #[test]
+    fn test_api_client_debug_masks_short_key() {
+        let client = ApiClient::new("short".to_string(), None);
+        let debug_output = format!("{:?}", client);
+
+        // Should mask short keys as ***
+        assert!(debug_output.contains("***"));
+        assert!(!debug_output.contains("short"));
     }
 }

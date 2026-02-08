@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 use crate::tools::ToolExecutor;
 
 /// Anthropic API client
+#[derive(Clone)]
 pub struct ApiClient {
     client: Client,
     api_key: String,
@@ -309,5 +310,13 @@ mod tests {
         // Should mask short keys as ***
         assert!(debug_output.contains("***"));
         assert!(!debug_output.contains("short"));
+    }
+
+    #[test]
+    fn test_api_client_clone() {
+        let client = ApiClient::new("test-key".to_string(), None);
+        let cloned = client.clone();
+        assert_eq!(cloned.model, "claude-opus-4-6");
+        assert_eq!(cloned.max_tokens, 4096);
     }
 }

@@ -10,11 +10,13 @@ use serenity::{
 };
 use tokio::sync::mpsc;
 use std::sync::Arc;
+use std::num::NonZeroUsize;
 use dashmap::DashMap;
+use lru::LruCache;
 use anyhow::{Result, anyhow};
 use tracing::{info, error, debug, warn};
 use chrono::Utc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const MAX_MESSAGE_CHANNELS: usize = 1000;
 
@@ -32,11 +34,11 @@ impl TypeMapKey for UserChannelMap {
     type Value = Arc<DashMap<UserId, ChannelId>>;
 }
 
-/// Type key for storing message_id -> channel_id mapping for replies
+/// Type key for storing message_id -> channel_id mapping for replies (LRU-bounded)
 struct MessageChannelMap;
 
 impl TypeMapKey for MessageChannelMap {
-    type Value = Arc<DashMap<String, ChannelId>>;
+    type Value = Arc<Mutex<LruCache<String, ChannelId>>>;
 }
 
 /// Type key for storing allowed users
@@ -83,17 +85,12 @@ impl EventHandler for DiscordHandler {
         let user_channel_map = data.get::<UserChannelMap>().expect("UserChannelMap not initialized");
         user_channel_map.insert(msg.author.id, msg.channel_id);
 
-        // Store message_id -> channel_id mapping for reply tracking
-        let message_channel_map = data.get::<MessageChannelMap>().expect("MessageChannelMap not initialized");
+        // Store message_id -> channel_id mapping for reply tracking (LRU-bounded)
+        let message_channel_map = data.get::<MessageChannelMap>().expect("MessageChannelMap not initialized").clone();
         let msg_id = format!("discord_{}", msg.id);
-        message_channel_map.insert(msg_id.clone(), msg.channel_id);
-
-        // Bound the map size to prevent unbounded growth
-        if message_channel_map.len() > MAX_MESSAGE_CHANNELS {
-            // Remove oldest entry
-            if let Some(first_key) = message_channel_map.iter().next().map(|e| e.key().clone()) {
-                message_channel_map.remove(&first_key);
-            }
+        {
+            let mut lru = message_channel_map.lock().await;
+            lru.put(msg_id.clone(), msg.channel_id);
         }
 
         // Get the message sender
@@ -131,8 +128,8 @@ pub struct DiscordChannel {
     allowed_users: Vec<String>, // Discord user IDs to accept DMs from
     http: Arc<RwLock<Option<Arc<serenity::http::Http>>>>,
     user_channel_map: Arc<DashMap<UserId, ChannelId>>,
-    /// Maps message_id -> channel_id for reply-to tracking
-    message_channels: Arc<DashMap<String, ChannelId>>,
+    /// Maps message_id -> channel_id for reply-to tracking (LRU-bounded)
+    message_channels: Arc<Mutex<LruCache<String, ChannelId>>>,
 }
 
 impl DiscordChannel {
@@ -147,7 +144,9 @@ impl DiscordChannel {
             allowed_users,
             http: Arc::new(RwLock::new(None)),
             user_channel_map: Arc::new(DashMap::new()),
-            message_channels: Arc::new(DashMap::new()),
+            message_channels: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(MAX_MESSAGE_CHANNELS).unwrap(),
+            ))),
         }
     }
 
@@ -225,10 +224,11 @@ impl MessageChannel for DiscordChannel {
 
         // Look up channel from reply_to if present
         let channel_id = if let Some(reply_to) = &msg.reply_to {
-            // Look up the channel from our message_channels map
-            if let Some(channel) = self.message_channels.get(reply_to) {
+            // Look up the channel from our LRU message_channels map
+            let mut lru = self.message_channels.lock().await;
+            if let Some(channel) = lru.get(reply_to) {
                 debug!("Found channel from reply_to: {}", reply_to);
-                Some(*channel.value())
+                Some(*channel)
             } else {
                 // reply_to not found, fall back to first available channel
                 warn!("reply_to '{}' not found in message tracking, falling back to first available channel", reply_to);

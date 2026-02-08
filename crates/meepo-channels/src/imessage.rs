@@ -12,8 +12,9 @@ use tracing::{info, error, debug, warn};
 use chrono::Utc;
 use tokio::process::Command;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use dashmap::DashMap;
+use std::num::NonZeroUsize;
+use tokio::sync::{Mutex, RwLock};
+use lru::LruCache;
 
 const MAX_MESSAGE_SENDERS: usize = 1000;
 
@@ -24,8 +25,8 @@ pub struct IMessageChannel {
     allowed_contacts: Vec<String>,
     db_path: PathBuf,
     last_rowid: Arc<RwLock<Option<i64>>>,
-    /// Maps message_id -> sender contact for reply-to tracking
-    message_senders: Arc<DashMap<String, String>>,
+    /// Maps message_id -> sender contact for reply-to tracking (LRU-bounded)
+    message_senders: Arc<Mutex<LruCache<String, String>>>,
 }
 
 impl IMessageChannel {
@@ -54,7 +55,9 @@ impl IMessageChannel {
             allowed_contacts,
             db_path,
             last_rowid: Arc::new(RwLock::new(None)),
-            message_senders: Arc::new(DashMap::new()),
+            message_senders: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(MAX_MESSAGE_SENDERS).unwrap(),
+            ))),
         }
     }
 
@@ -161,16 +164,10 @@ impl IMessageChannel {
         for (rowid, handle, content, timestamp) in pending_messages {
             let msg_id = format!("imessage_{}", rowid);
 
-            // Store message_id -> sender mapping for reply-to tracking
-            self.message_senders.insert(msg_id.clone(), handle.clone());
-
-            // Bound the map size to prevent unbounded growth
-            if self.message_senders.len() > MAX_MESSAGE_SENDERS {
-                // Remove oldest entries (simple approach: clear when over limit)
-                // In production, consider using a LRU cache
-                if let Some(first_key) = self.message_senders.iter().next().map(|e| e.key().clone()) {
-                    self.message_senders.remove(&first_key);
-                }
+            // Store message_id -> sender mapping for reply-to tracking (LRU auto-evicts oldest)
+            {
+                let mut lru = self.message_senders.lock().await;
+                lru.put(msg_id.clone(), handle.clone());
             }
 
             let incoming = IncomingMessage {
@@ -297,12 +294,13 @@ impl MessageChannel for IMessageChannel {
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
         debug!("Sending iMessage");
 
-        // Look up recipient from reply_to message tracking
+        // Look up recipient from reply_to message tracking (LRU cache)
         let recipient = if let Some(reply_to) = &msg.reply_to {
-            // Look up the sender from our message_senders map
-            if let Some(sender) = self.message_senders.get(reply_to) {
-                debug!("Found recipient from reply_to: {}", sender.value());
-                sender.value().clone()
+            // Look up the sender from our LRU message_senders cache
+            let mut lru = self.message_senders.lock().await;
+            if let Some(sender) = lru.get(reply_to) {
+                debug!("Found recipient from reply_to: {}", sender);
+                sender.clone()
             } else {
                 // reply_to not found in map, fall back to first allowed contact
                 warn!("reply_to '{}' not found in message tracking, falling back to first allowed contact", reply_to);
@@ -342,8 +340,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_message_sender_tracking() {
+    #[tokio::test]
+    async fn test_message_sender_tracking() {
         let channel = IMessageChannel::new(
             Duration::from_secs(3),
             "/d".to_string(),
@@ -352,18 +350,43 @@ mod tests {
         );
 
         // Simulate adding message sender mappings
-        channel.message_senders.insert("imessage_123".to_string(), "+15551234567".to_string());
-        channel.message_senders.insert("imessage_456".to_string(), "+15559999999".to_string());
+        {
+            let mut lru = channel.message_senders.lock().await;
+            lru.put("imessage_123".to_string(), "+15551234567".to_string());
+            lru.put("imessage_456".to_string(), "+15559999999".to_string());
+        }
 
         // Verify lookups work
-        assert_eq!(
-            channel.message_senders.get("imessage_123").unwrap().value(),
-            "+15551234567"
+        {
+            let mut lru = channel.message_senders.lock().await;
+            assert_eq!(lru.get("imessage_123").unwrap(), "+15551234567");
+            assert_eq!(lru.get("imessage_456").unwrap(), "+15559999999");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_message_sender_lru_eviction() {
+        let channel = IMessageChannel::new(
+            Duration::from_secs(3),
+            "/d".to_string(),
+            vec![],
+            None,
         );
-        assert_eq!(
-            channel.message_senders.get("imessage_456").unwrap().value(),
-            "+15559999999"
-        );
+
+        // Fill the LRU cache beyond capacity
+        {
+            let mut lru = channel.message_senders.lock().await;
+            for i in 0..MAX_MESSAGE_SENDERS + 10 {
+                lru.put(format!("msg_{}", i), format!("sender_{}", i));
+            }
+            // Should not exceed capacity
+            assert_eq!(lru.len(), MAX_MESSAGE_SENDERS);
+            // Oldest entries should be evicted
+            assert!(lru.peek("msg_0").is_none());
+            assert!(lru.peek("msg_9").is_none());
+            // Newest entries should still be present
+            assert!(lru.peek(&format!("msg_{}", MAX_MESSAGE_SENDERS + 9)).is_some());
+        }
     }
 
     #[test]

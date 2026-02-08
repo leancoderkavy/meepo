@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeepoConfig {
@@ -179,8 +180,27 @@ impl MeepoConfig {
         // Expand environment variables before parsing
         let expanded = expand_env_vars(&content);
 
-        toml::from_str(&expanded)
-            .with_context(|| format!("Failed to parse config at {}", path.display()))
+        let config: Self = toml::from_str(&expanded)
+            .with_context(|| format!("Failed to parse config at {}", path.display()))?;
+
+        // Check for hardcoded API keys and tokens
+        if config.providers.anthropic.api_key.starts_with("sk-ant-") {
+            warn!("API key is hardcoded in config file. For security, use environment variables: api_key = \"${{ANTHROPIC_API_KEY}}\"");
+        }
+
+        if !config.channels.discord.token.is_empty() && !config.channels.discord.token.contains("${") {
+            warn!("Discord token is hardcoded in config file. For security, use environment variables: token = \"${{DISCORD_TOKEN}}\"");
+        }
+
+        if !config.channels.slack.bot_token.is_empty() && !config.channels.slack.bot_token.contains("${") {
+            warn!("Slack bot token is hardcoded in config file. For security, use environment variables: bot_token = \"${{SLACK_BOT_TOKEN}}\"");
+        }
+
+        if !config.channels.slack.app_token.is_empty() && !config.channels.slack.app_token.contains("${") {
+            warn!("Slack app token is hardcoded in config file. For security, use environment variables: app_token = \"${{SLACK_APP_TOKEN}}\"");
+        }
+
+        Ok(config)
     }
 }
 

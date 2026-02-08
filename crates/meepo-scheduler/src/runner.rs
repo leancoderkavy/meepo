@@ -9,11 +9,12 @@ use chrono::{NaiveTime, Utc};
 use std::str::FromStr;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use lru::LruCache;
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep_until, Instant};
@@ -267,8 +268,12 @@ impl WatcherRunner {
                 }
             }
 
-            // Clean up
-            active_tasks.write().await.remove(&watcher.id);
+            // Clean up - idempotent, entry may already be removed by stop_watcher()
+            let mut tasks = active_tasks.write().await;
+            if tasks.remove(&watcher.id).is_some() {
+                debug!("Polling watcher {} cleaned up from active tasks", watcher.id);
+            }
+            drop(tasks);
             debug!("Polling watcher {} task ended", watcher.id);
         });
 
@@ -355,8 +360,12 @@ impl WatcherRunner {
                 }
             }
 
-            // Clean up
-            active_tasks.write().await.remove(&watcher_id);
+            // Clean up - idempotent, entry may already be removed by stop_watcher()
+            let mut tasks = active_tasks.write().await;
+            if tasks.remove(&watcher_id).is_some() {
+                debug!("File watcher {} cleaned up from active tasks", watcher_id);
+            }
+            drop(tasks);
             debug!("File watcher {} task ended", watcher_id);
         });
 
@@ -431,8 +440,12 @@ impl WatcherRunner {
                 }
             }
 
-            // Clean up
-            active_tasks.write().await.remove(&watcher_id);
+            // Clean up - idempotent, entry may already be removed by stop_watcher()
+            let mut tasks = active_tasks.write().await;
+            if tasks.remove(&watcher_id).is_some() {
+                debug!("Scheduled watcher {} cleaned up from active tasks", watcher_id);
+            }
+            drop(tasks);
             debug!("Scheduled watcher {} task ended", watcher_id);
         });
 
@@ -469,7 +482,11 @@ impl WatcherRunner {
                     error!("Failed to send one-shot task event: {}", e);
                 }
 
-                active_tasks.write().await.remove(&watcher_id);
+                // Clean up - idempotent, entry may already be removed by stop_watcher()
+                let mut tasks = active_tasks.write().await;
+                if tasks.remove(&watcher_id).is_some() {
+                    debug!("One-shot watcher {} cleaned up from active tasks (immediate execution)", watcher_id);
+                }
                 return;
             }
 
@@ -503,8 +520,12 @@ impl WatcherRunner {
                 }
             }
 
-            // Clean up (one-shot always removes itself)
-            active_tasks.write().await.remove(&watcher_id);
+            // Clean up - idempotent, entry may already be removed by stop_watcher()
+            let mut tasks = active_tasks.write().await;
+            if tasks.remove(&watcher_id).is_some() {
+                debug!("One-shot watcher {} cleaned up from active tasks", watcher_id);
+            }
+            drop(tasks);
             debug!("One-shot watcher {} task ended", watcher_id);
         });
 
@@ -514,8 +535,8 @@ impl WatcherRunner {
 
 /// State maintained across poll cycles for dedup
 struct PollState {
-    /// Hashes of previously seen items (emails, calendar events)
-    seen_hashes: HashSet<u64>,
+    /// Hashes of previously seen items (emails, calendar events) - bounded LRU cache
+    seen_hashes: LruCache<u64, ()>,
     /// Last GitHub event ID seen
     last_github_event_id: Option<String>,
 }
@@ -523,7 +544,7 @@ struct PollState {
 impl PollState {
     fn new() -> Self {
         Self {
-            seen_hashes: HashSet::new(),
+            seen_hashes: LruCache::new(NonZeroUsize::new(10_000).unwrap()),
             last_github_event_id: None,
         }
     }
@@ -623,12 +644,13 @@ end tell
                     }
                 }
 
-                // Dedup
+                // Dedup - check if we've seen this before
                 let hash_key = format!("{}|{}|{}", email_from, email_subject, email_date);
                 let hash = PollState::hash_item(&hash_key);
-                if !state.seen_hashes.insert(hash) {
+                if state.seen_hashes.get(&hash).is_some() {
                     continue;
                 }
+                state.seen_hashes.put(hash, ());
 
                 // Truncate body for the event
                 let body_preview = if email_body.len() > 500 {
@@ -715,12 +737,13 @@ end tell
                     }
                 }
 
-                // Dedup
+                // Dedup - check if we've seen this before
                 let hash_key = format!("{}|{}", event_title, event_start);
                 let hash = PollState::hash_item(&hash_key);
-                if !state.seen_hashes.insert(hash) {
+                if state.seen_hashes.get(&hash).is_some() {
                     continue;
                 }
+                state.seen_hashes.put(hash, ());
 
                 let event = WatcherEvent::calendar(
                     watcher.id.clone(),
@@ -742,6 +765,7 @@ end tell
             let url = format!("https://api.github.com/repos/{}/events", repo);
             let client = reqwest::Client::builder()
                 .user_agent("meepo-agent/1.0")
+                .timeout(Duration::from_secs(30))
                 .build()?;
 
             let response = client.get(&url).send().await?;

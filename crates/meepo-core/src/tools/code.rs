@@ -116,6 +116,57 @@ impl ToolHandler for MakePrTool {
 
         debug!("Creating PR in repo: {} with branch: {}", repo, branch_name);
 
+        // Get original branch for rollback
+        let original_branch_output = Command::new("git")
+            .current_dir(repo)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .await
+            .context("Failed to get current branch")?;
+
+        let original_branch = if original_branch_output.status.success() {
+            String::from_utf8_lossy(&original_branch_output.stdout)
+                .trim()
+                .to_string()
+        } else {
+            "main".to_string() // fallback
+        };
+
+        debug!("Original branch: {}", original_branch);
+
+        let mut branch_created = false;
+        let mut branch_pushed = false;
+
+        // Clone values for the cleanup closure
+        let branch_name_clone = branch_name.clone();
+        let original_branch_clone = original_branch.clone();
+        let repo_clone = repo.to_string();
+
+        // Cleanup helper
+        let cleanup = |branch_created: bool, branch_pushed: bool| async move {
+            if branch_pushed {
+                warn!("Cleaning up: deleting remote branch {}", branch_name_clone);
+                let _ = Command::new("git")
+                    .current_dir(&repo_clone)
+                    .args(["push", "origin", "--delete", &branch_name_clone])
+                    .output()
+                    .await;
+            }
+            if branch_created {
+                warn!("Cleaning up: switching back to {} and deleting local branch {}", original_branch_clone, branch_name_clone);
+                let _ = Command::new("git")
+                    .current_dir(&repo_clone)
+                    .args(["checkout", &original_branch_clone])
+                    .output()
+                    .await;
+                let _ = Command::new("git")
+                    .current_dir(&repo_clone)
+                    .args(["branch", "-D", &branch_name_clone])
+                    .output()
+                    .await;
+            }
+        };
+
         // Create branch
         let create_branch = Command::new("git")
             .current_dir(repo)
@@ -128,6 +179,7 @@ impl ToolHandler for MakePrTool {
             let error = String::from_utf8_lossy(&create_branch.stderr).to_string();
             return Err(anyhow::anyhow!("Failed to create branch: {}", error));
         }
+        branch_created = true;
 
         // Execute task with Claude Code
         let code_output = Command::new("claude")
@@ -136,37 +188,63 @@ impl ToolHandler for MakePrTool {
             .arg(repo)
             .arg(task)
             .output()
-            .await
-            .context("Failed to execute claude CLI")?;
+            .await;
 
+        if let Err(e) = code_output {
+            cleanup(branch_created, branch_pushed).await;
+            return Err(anyhow::anyhow!("Failed to execute claude CLI: {}", e));
+        }
+
+        let code_output = code_output.unwrap();
         if !code_output.status.success() {
             let error = String::from_utf8_lossy(&code_output.stderr).to_string();
+            cleanup(branch_created, branch_pushed).await;
             return Err(anyhow::anyhow!("Claude Code task failed: {}", error));
         }
 
         // Commit changes
-        Command::new("git")
+        let stage_result = Command::new("git")
             .current_dir(repo)
             .args(["add", "-A"])
             .output()
-            .await
-            .context("Failed to stage changes")?;
+            .await;
+
+        if let Err(e) = stage_result {
+            cleanup(branch_created, branch_pushed).await;
+            return Err(anyhow::anyhow!("Failed to stage changes: {}", e));
+        }
 
         let commit_msg = format!("feat: {}\n\nCo-Authored-By: meepo <meepo@anthropic.com>", task);
-        Command::new("git")
+        let commit_result = Command::new("git")
             .current_dir(repo)
             .args(["commit", "-m", &commit_msg])
             .output()
-            .await
-            .context("Failed to commit changes")?;
+            .await;
+
+        if let Err(e) = commit_result {
+            cleanup(branch_created, branch_pushed).await;
+            return Err(anyhow::anyhow!("Failed to commit changes: {}", e));
+        }
 
         // Push branch
-        Command::new("git")
+        let push_result = Command::new("git")
             .current_dir(repo)
             .args(["push", "-u", "origin", &branch_name])
             .output()
-            .await
-            .context("Failed to push branch")?;
+            .await;
+
+        if let Err(e) = push_result {
+            cleanup(branch_created, branch_pushed).await;
+            return Err(anyhow::anyhow!("Failed to push branch: {}", e));
+        }
+
+        let push_output = push_result.unwrap();
+        if !push_output.status.success() {
+            cleanup(branch_created, branch_pushed).await;
+            let error = String::from_utf8_lossy(&push_output.stderr).to_string();
+            return Err(anyhow::anyhow!("Failed to push branch: {}", error));
+        }
+        branch_pushed = true;
 
         // Create PR using gh
         let pr_output = Command::new("gh")
@@ -177,14 +255,20 @@ impl ToolHandler for MakePrTool {
                 "--body", "Automated PR created by meepo agent"
             ])
             .output()
-            .await
-            .context("Failed to create PR")?;
+            .await;
 
+        if let Err(e) = pr_output {
+            cleanup(branch_created, branch_pushed).await;
+            return Err(anyhow::anyhow!("Failed to create PR: {}", e));
+        }
+
+        let pr_output = pr_output.unwrap();
         if pr_output.status.success() {
             let result = String::from_utf8_lossy(&pr_output.stdout).to_string();
             Ok(format!("PR created successfully:\n{}", result))
         } else {
             let error = String::from_utf8_lossy(&pr_output.stderr).to_string();
+            cleanup(branch_created, branch_pushed).await;
             warn!("Failed to create PR: {}", error);
             Err(anyhow::anyhow!("Failed to create PR: {}", error))
         }

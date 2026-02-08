@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::path::Path;
 use std::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Entity in the knowledge graph
@@ -174,7 +174,10 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
 
         conn.execute(
             "INSERT INTO entities (id, name, entity_type, metadata, created_at, updated_at)
@@ -195,7 +198,10 @@ impl KnowledgeDb {
 
     /// Get entity by ID
     pub fn get_entity(&self, id: &str) -> Result<Option<Entity>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let result = conn
             .query_row(
                 "SELECT id, name, entity_type, metadata, created_at, updated_at
@@ -244,7 +250,10 @@ impl KnowledgeDb {
         };
 
         let pattern = format!("%{}%", query);
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let mut stmt = conn.prepare(sql)?;
 
         let entities = if let Some(etype) = entity_type {
@@ -259,7 +268,10 @@ impl KnowledgeDb {
 
     /// Get all entities
     pub fn get_all_entities(&self) -> Result<Vec<Entity>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let mut stmt = conn.prepare(
             "SELECT id, name, entity_type, metadata, created_at, updated_at
              FROM entities
@@ -306,7 +318,10 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
 
         conn.execute(
             "INSERT INTO relationships (id, source_id, target_id, relation_type, metadata, created_at)
@@ -327,7 +342,10 @@ impl KnowledgeDb {
 
     /// Get relationships for an entity
     pub fn get_relationships_for(&self, entity_id: &str) -> Result<Vec<Relationship>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let mut stmt = conn.prepare(
             "SELECT id, source_id, target_id, relation_type, metadata, created_at
              FROM relationships
@@ -372,7 +390,10 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
 
         conn.execute(
             "INSERT INTO conversations (id, channel, sender, content, metadata, created_at)
@@ -393,7 +414,10 @@ impl KnowledgeDb {
 
     /// Get recent conversations
     pub fn get_recent_conversations(&self, channel: Option<&str>, limit: usize) -> Result<Vec<Conversation>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let (sql, params_vec): (String, Vec<String>) = if let Some(ch) = channel {
             (
                 "SELECT id, channel, sender, content, metadata, created_at
@@ -458,7 +482,10 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let config_json = serde_json::to_string(&config)?;
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
 
         conn.execute(
             "INSERT INTO watchers (id, kind, config, action, reply_channel, active, created_at)
@@ -479,7 +506,10 @@ impl KnowledgeDb {
 
     /// Get active watchers
     pub fn get_active_watchers(&self) -> Result<Vec<Watcher>> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         let mut stmt = conn.prepare(
             "SELECT id, kind, config, action, reply_channel, active, created_at
              FROM watchers
@@ -517,7 +547,10 @@ impl KnowledgeDb {
 
     /// Update watcher active status
     pub fn update_watcher_active(&self, id: &str, active: bool) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         conn.execute(
             "UPDATE watchers SET active = ?1 WHERE id = ?2",
             params![active as i64, id],
@@ -529,7 +562,10 @@ impl KnowledgeDb {
 
     /// Delete a watcher
     pub fn delete_watcher(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
         conn.execute("DELETE FROM watchers WHERE id = ?1", params![id])?;
         debug!("Deleted watcher {}", id);
         Ok(())

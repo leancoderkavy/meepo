@@ -80,6 +80,10 @@ impl IMessageChannel {
     /// Poll the iMessage database for new messages
     async fn poll_messages(&self, tx: &mpsc::Sender<IncomingMessage>) -> Result<()> {
         // Open read-only connection to chat.db
+        // Note: We open a fresh connection on each poll rather than maintaining a persistent connection
+        // because: (1) Messages.app may lock the database, so a stale connection could fail,
+        // (2) SQLite read-only connections are lightweight (~1ms overhead),
+        // (3) This ensures we always have a valid connection without complex error recovery.
         let conn = Connection::open_with_flags(
             &self.db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,

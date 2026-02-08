@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use reqwest::Client;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::tools::ToolExecutor;
@@ -41,8 +42,13 @@ impl std::fmt::Debug for ApiClient {
 impl ApiClient {
     /// Create a new API client
     pub fn new(api_key: String, model: Option<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()
+            .expect("Failed to build HTTP client");
+
         Self {
-            client: Client::new(),
+            client,
             api_key,
             base_url: "https://api.anthropic.com".to_string(),
             model: model.unwrap_or_else(|| "claude-opus-4-6".to_string()),

@@ -106,7 +106,9 @@ impl MessageChannel for SlackChannel {
             return Err(anyhow!("Slack bot token is empty"));
         }
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
 
         // Verify token and get bot user ID
         let auth_result = Self::api_call(&client, &self.bot_token, "auth.test", &[]).await?;
@@ -154,7 +156,10 @@ impl MessageChannel for SlackChannel {
         // Spawn polling task (safe: all initialization is complete)
         tokio::spawn(async move {
             info!("Slack polling task started");
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client for Slack polling");
 
             // Track latest timestamp per channel
             let mut latest_ts: HashMap<String, String> = HashMap::new();
@@ -171,7 +176,9 @@ impl MessageChannel for SlackChannel {
                 interval.tick().await;
                 debug!("Polling Slack for new messages");
 
-                // Refresh DM channel list periodically
+                // Wrap the entire polling logic in a catch-all error handler to prevent panics
+                let poll_result: Result<()> = async {
+                    // Refresh DM channel list periodically
                 if let Ok(convos) = Self::api_call(
                     &client,
                     &token,
@@ -281,6 +288,14 @@ impl MessageChannel for SlackChannel {
                         latest_ts.insert(channel_id.clone(), max_ts);
                     }
                 }
+
+                Ok(())
+                }.await;
+
+                // Log any errors but continue polling
+                if let Err(e) = poll_result {
+                    error!("Error during Slack polling cycle: {}", e);
+                }
             }
         });
 
@@ -291,7 +306,9 @@ impl MessageChannel for SlackChannel {
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
         debug!("Sending Slack message");
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
 
         // Find the channel to send to
         // Try to extract user_id from reply_to (format: "slack_{channel}_{ts}")

@@ -11,6 +11,7 @@ use serenity::{
 use tokio::sync::mpsc;
 use std::sync::Arc;
 use std::num::NonZeroUsize;
+use std::time::Duration;
 use dashmap::DashMap;
 use lru::LruCache;
 use anyhow::{Result, anyhow};
@@ -172,43 +173,74 @@ impl MessageChannel for DiscordChannel {
         let user_ids = self.parse_user_ids()?;
         info!("Allowed Discord users: {:?}", user_ids);
 
-        // Set up intents
-        let intents = GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+        // Clone data needed inside the spawned task
+        let token = self.token.clone();
+        let user_channel_map = self.user_channel_map.clone();
+        let message_channels = self.message_channels.clone();
+        let http_arc = self.http.clone();
 
-        // Build the client
-        let mut client = Client::builder(&self.token, intents)
-            .event_handler(DiscordHandler)
-            .await
-            .map_err(|e| anyhow!("Failed to create Discord client: {}", e))?;
-
-        // Store the HTTP client for sending messages
-        let http = client.http.clone();
-
-        // Store data in TypeMap
-        {
-            let mut data = client.data.write().await;
-            data.insert::<MessageSender>(tx);
-            data.insert::<UserChannelMap>(self.user_channel_map.clone());
-            data.insert::<MessageChannelMap>(self.message_channels.clone());
-            data.insert::<AllowedUsers>(user_ids);
-        }
-
-        // Store HTTP client in self (we need to use unsafe or interior mutability)
-        // Since we can't mutate self in this async trait method, we'll need to
-        // handle this differently. Let's use a different approach.
-
-        // Store the HTTP client
-        {
-            let mut http_guard = self.http.write().await;
-            *http_guard = Some(http);
-        }
-
-        // Spawn the Discord client in a background task
+        // Spawn the Discord client in a background task with retry logic
         tokio::spawn(async move {
-            info!("Discord client task starting");
-            if let Err(e) = client.start().await {
-                error!("Discord client error: {}", e);
+            let mut backoff = Duration::from_secs(1);
+            let max_backoff = Duration::from_secs(60);
+            let mut retry_count = 0;
+
+            loop {
+                retry_count += 1;
+                info!("Discord client starting (attempt #{})", retry_count);
+
+                // Set up intents
+                let intents = GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+
+                // Build the client
+                let mut client = match Client::builder(&token, intents)
+                    .event_handler(DiscordHandler)
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to create Discord client: {}", e);
+                        warn!("Retrying in {:?}...", backoff);
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+
+                // Store the HTTP client for sending messages
+                let http = client.http.clone();
+
+                // Store data in TypeMap
+                {
+                    let mut data = client.data.write().await;
+                    data.insert::<MessageSender>(tx.clone());
+                    data.insert::<UserChannelMap>(user_channel_map.clone());
+                    data.insert::<MessageChannelMap>(message_channels.clone());
+                    data.insert::<AllowedUsers>(user_ids.clone());
+                }
+
+                // Store HTTP client for sending messages
+                {
+                    let mut http_guard = http_arc.write().await;
+                    *http_guard = Some(http);
+                }
+
+                // Start the client
+                match client.start().await {
+                    Ok(_) => {
+                        info!("Discord client stopped cleanly");
+                        break;
+                    }
+                    Err(e) => {
+                        error!("Discord client error: {}", e);
+                        warn!("Retrying in {:?}...", backoff);
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                    }
+                }
             }
+
+            info!("Discord client task exiting");
         });
 
         info!("Discord channel adapter started");

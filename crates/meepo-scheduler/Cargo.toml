@@ -18,3 +18,4 @@ rusqlite = { workspace = true }
 notify = { workspace = true }
 cron = { workspace = true }
 reqwest = { workspace = true }
+lru = { workspace = true }

@@ -105,7 +105,7 @@ pub fn get_active_watchers(conn: &Connection) -> Result<Vec<Watcher>> {
         .prepare("SELECT id, kind_json, action, reply_channel, active, created_at FROM watchers WHERE active = 1")
         .context("Failed to prepare query for active watchers")?;
 
-    let watchers = stmt
+    let watchers: Vec<Watcher> = stmt
         .query_map([], |row| {
             let id: String = row.get(0)?;
             let kind_json: String = row.get(1)?;

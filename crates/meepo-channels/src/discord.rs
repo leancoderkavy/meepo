@@ -14,6 +14,7 @@ use dashmap::DashMap;
 use anyhow::{Result, anyhow};
 use tracing::{info, error, debug, warn};
 use chrono::Utc;
+use tokio::sync::RwLock;
 
 /// Type key for storing the incoming message sender in Serenity's TypeMap
 struct MessageSender;
@@ -47,8 +48,8 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
-        // Only process direct messages
-        if !msg.is_private() {
+        // Only process direct messages (guild_id is None for DMs)
+        if msg.guild_id.is_some() {
             return;
         }
 
@@ -74,7 +75,10 @@ impl EventHandler for DiscordHandler {
         // Convert to IncomingMessage
         let incoming = IncomingMessage {
             id: format!("discord_{}", msg.id),
-            sender: format!("{}#{}", msg.author.name, msg.author.discriminator.unwrap_or(0)),
+            sender: match msg.author.discriminator {
+                Some(d) => format!("{}#{}", msg.author.name, d),
+                None => msg.author.name.clone(),
+            },
             content: msg.content.clone(),
             channel: ChannelType::Discord,
             timestamp: Utc::now(),
@@ -97,7 +101,7 @@ impl EventHandler for DiscordHandler {
 pub struct DiscordChannel {
     token: String,
     allowed_users: Vec<String>, // Discord user IDs to accept DMs from
-    http: Option<Arc<serenity::http::Http>>,
+    http: Arc<RwLock<Option<Arc<serenity::http::Http>>>>,
     user_channel_map: Arc<DashMap<UserId, ChannelId>>,
 }
 
@@ -111,7 +115,7 @@ impl DiscordChannel {
         Self {
             token,
             allowed_users,
-            http: None,
+            http: Arc::new(RwLock::new(None)),
             user_channel_map: Arc::new(DashMap::new()),
         }
     }
@@ -162,8 +166,13 @@ impl MessageChannel for DiscordChannel {
         // Since we can't mutate self in this async trait method, we'll need to
         // handle this differently. Let's use a different approach.
 
+        // Store the HTTP client
+        {
+            let mut http_guard = self.http.write().await;
+            *http_guard = Some(http);
+        }
+
         // Spawn the Discord client in a background task
-        let user_channel_map = self.user_channel_map.clone();
         tokio::spawn(async move {
             info!("Discord client task starting");
             if let Err(e) = client.start().await {
@@ -171,25 +180,19 @@ impl MessageChannel for DiscordChannel {
             }
         });
 
-        // Store the HTTP client (this is a workaround for the mutability issue)
-        // In production, we'd use Arc<RwLock<Option<Http>>> or similar
-        unsafe {
-            let self_mut = &mut *(self as *const Self as *mut Self);
-            self_mut.http = Some(http);
-        }
-
         info!("Discord channel adapter started");
         Ok(())
     }
 
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
-        let http = self.http.as_ref()
+        let http_guard = self.http.read().await;
+        let http = http_guard.as_ref()
             .ok_or_else(|| anyhow!("Discord channel not started yet"))?;
 
         debug!("Sending Discord message");
 
         // Extract user ID from reply_to if present
-        let user_id = if let Some(ref reply_to) = msg.reply_to {
+        let user_id = if let Some(_reply_to) = msg.reply_to {
             // Parse the message ID format: "discord_{message_id}"
             // But we actually need the user ID, which we should have in our map
             // For now, we'll need to search through our map

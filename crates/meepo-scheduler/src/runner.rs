@@ -6,13 +6,14 @@
 use crate::watcher::{Watcher, WatcherEvent, WatcherKind};
 use anyhow::{Context, Result};
 use chrono::{NaiveTime, Utc};
+use std::str::FromStr;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{sleep, sleep_until, Instant};
+use tokio::time::{sleep_until, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -275,11 +276,10 @@ impl WatcherRunner {
         watcher: Watcher,
         cancel_token: CancellationToken,
     ) -> Result<()> {
-        let WatcherKind::FileWatch { path } = &watcher.kind else {
-            unreachable!();
+        let path = match &watcher.kind {
+            WatcherKind::FileWatch { path } => path.clone(),
+            _ => unreachable!(),
         };
-
-        let path = path.clone();
         let event_tx = self.event_tx.clone();
         let watcher_id = watcher.id.clone();
         let global_shutdown = self.shutdown_token.clone();
@@ -364,12 +364,13 @@ impl WatcherRunner {
         watcher: Watcher,
         cancel_token: CancellationToken,
     ) -> Result<()> {
-        let WatcherKind::Scheduled { cron_expr, task } = &watcher.kind else {
-            unreachable!();
+        let (cron_expr, task) = match &watcher.kind {
+            WatcherKind::Scheduled { cron_expr, task } => (cron_expr.clone(), task.clone()),
+            _ => unreachable!(),
         };
 
         // Parse cron expression
-        let schedule = cron::Schedule::from_str(cron_expr)
+        let schedule = cron::Schedule::from_str(&cron_expr)
             .with_context(|| format!("Invalid cron expression: {}", cron_expr))?;
 
         let event_tx = self.event_tx.clone();
@@ -392,7 +393,7 @@ impl WatcherRunner {
                     }
                 };
 
-                let duration = (next - now).to_std().unwrap_or(Duration::from_secs(60));
+                let duration: Duration = (next - now).to_std().unwrap_or(Duration::from_secs(60));
                 let wake_time = Instant::now() + duration;
 
                 debug!(
@@ -439,14 +440,12 @@ impl WatcherRunner {
         watcher: Watcher,
         cancel_token: CancellationToken,
     ) -> Result<()> {
-        let WatcherKind::OneShot { at, task } = &watcher.kind else {
-            unreachable!();
+        let (target_time, task_name) = match &watcher.kind {
+            WatcherKind::OneShot { at, task } => (*at, task.clone()),
+            _ => unreachable!(),
         };
-
-        let target_time = *at;
         let event_tx = self.event_tx.clone();
         let watcher_id = watcher.id.clone();
-        let task_name = task.clone();
         let global_shutdown = self.shutdown_token.clone();
         let active_tasks = self.active_tasks.clone();
 
@@ -511,7 +510,7 @@ impl WatcherRunner {
 /// Poll a watcher (placeholder implementation)
 async fn poll_watcher(
     watcher: &Watcher,
-    event_tx: &mpsc::UnboundedSender<WatcherEvent>,
+    _event_tx: &mpsc::UnboundedSender<WatcherEvent>,
 ) -> Result<()> {
     match &watcher.kind {
         WatcherKind::EmailWatch {

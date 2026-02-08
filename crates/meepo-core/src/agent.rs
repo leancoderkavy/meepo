@@ -5,8 +5,8 @@ use std::sync::Arc;
 use tracing::{info, debug};
 
 use crate::api::ApiClient;
-use crate::tools::ToolRegistry;
-use crate::types::{IncomingMessage, OutgoingMessage, ChannelType};
+use crate::tools::{ToolExecutor, ToolRegistry};
+use crate::types::{IncomingMessage, OutgoingMessage};
 use crate::context::build_system_prompt;
 
 use meepo_knowledge::KnowledgeDb;
@@ -174,6 +174,7 @@ impl Agent {
 mod tests {
     use super::*;
     use crate::tools::ToolRegistry;
+    use crate::types::ChannelType;
     use tempfile::TempDir;
     use chrono::Utc;
 

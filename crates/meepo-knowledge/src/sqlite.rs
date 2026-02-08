@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::path::Path;
+use std::sync::Mutex;
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -57,9 +58,9 @@ pub struct Watcher {
     pub created_at: DateTime<Utc>,
 }
 
-/// SQLite database wrapper
+/// SQLite database wrapper (thread-safe via Mutex)
 pub struct KnowledgeDb {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl KnowledgeDb {
@@ -160,7 +161,7 @@ impl KnowledgeDb {
 
         debug!("Database schema initialized successfully");
 
-        Ok(Self { conn })
+        Ok(Self { conn: Mutex::new(conn) })
     }
 
     /// Insert a new entity
@@ -173,8 +174,9 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
 
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO entities (id, name, entity_type, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -193,8 +195,8 @@ impl KnowledgeDb {
 
     /// Get entity by ID
     pub fn get_entity(&self, id: &str) -> Result<Option<Entity>> {
-        let result = self
-            .conn
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let result = conn
             .query_row(
                 "SELECT id, name, entity_type, metadata, created_at, updated_at
                  FROM entities WHERE id = ?1",
@@ -242,7 +244,8 @@ impl KnowledgeDb {
         };
 
         let pattern = format!("%{}%", query);
-        let mut stmt = self.conn.prepare(sql)?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(sql)?;
 
         let entities = if let Some(etype) = entity_type {
             stmt.query_map(params![&pattern, etype], Self::row_to_entity)?
@@ -256,7 +259,8 @@ impl KnowledgeDb {
 
     /// Get all entities
     pub fn get_all_entities(&self) -> Result<Vec<Entity>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
             "SELECT id, name, entity_type, metadata, created_at, updated_at
              FROM entities
              ORDER BY updated_at DESC"
@@ -302,8 +306,9 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
 
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO relationships (id, source_id, target_id, relation_type, metadata, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -322,7 +327,8 @@ impl KnowledgeDb {
 
     /// Get relationships for an entity
     pub fn get_relationships_for(&self, entity_id: &str) -> Result<Vec<Relationship>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
             "SELECT id, source_id, target_id, relation_type, metadata, created_at
              FROM relationships
              WHERE source_id = ?1 OR target_id = ?1
@@ -366,8 +372,9 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata_json = metadata.map(|m| serde_json::to_string(&m)).transpose()?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
 
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO conversations (id, channel, sender, content, metadata, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -386,6 +393,7 @@ impl KnowledgeDb {
 
     /// Get recent conversations
     pub fn get_recent_conversations(&self, channel: Option<&str>, limit: usize) -> Result<Vec<Conversation>> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
         let (sql, params_vec): (String, Vec<String>) = if let Some(ch) = channel {
             (
                 "SELECT id, channel, sender, content, metadata, created_at
@@ -405,7 +413,7 @@ impl KnowledgeDb {
             )
         };
 
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = conn.prepare(&sql)?;
 
         let conversations = if channel.is_some() {
             stmt.query_map(params![&params_vec[0], &params_vec[1]], Self::row_to_conversation)?
@@ -450,8 +458,9 @@ impl KnowledgeDb {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let config_json = serde_json::to_string(&config)?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
 
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO watchers (id, kind, config, action, reply_channel, active, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
             params![
@@ -470,7 +479,8 @@ impl KnowledgeDb {
 
     /// Get active watchers
     pub fn get_active_watchers(&self) -> Result<Vec<Watcher>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
             "SELECT id, kind, config, action, reply_channel, active, created_at
              FROM watchers
              WHERE active = 1
@@ -507,7 +517,8 @@ impl KnowledgeDb {
 
     /// Update watcher active status
     pub fn update_watcher_active(&self, id: &str, active: bool) -> Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        conn.execute(
             "UPDATE watchers SET active = ?1 WHERE id = ?2",
             params![active as i64, id],
         )?;
@@ -518,7 +529,8 @@ impl KnowledgeDb {
 
     /// Delete a watcher
     pub fn delete_watcher(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM watchers WHERE id = ?1", params![id])?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        conn.execute("DELETE FROM watchers WHERE id = ?1", params![id])?;
         debug!("Deleted watcher {}", id);
         Ok(())
     }

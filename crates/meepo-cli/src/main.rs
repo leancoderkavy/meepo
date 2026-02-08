@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, error};
@@ -29,10 +30,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the Meepo meepo
+    /// Start the Meepo daemon
     Start,
 
-    /// Stop a running Meepo meepo
+    /// Stop a running Meepo daemon
     Stop,
 
     /// Send a one-shot message to the agent
@@ -115,27 +116,29 @@ async fn cmd_config(config_path: &Option<PathBuf>) -> Result<()> {
 
 async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     let cfg = MeepoConfig::load(config_path)?;
-    info!("Starting Meepo meepo...");
+    info!("Starting Meepo daemon...");
 
     let cancel = CancellationToken::new();
 
-    // Initialize knowledge graph
+    // Initialize knowledge database
     let db_path = shellexpand(&cfg.knowledge.db_path);
     let tantivy_path = shellexpand(&cfg.knowledge.tantivy_path);
-    std::fs::create_dir_all(&db_path.parent().unwrap_or(std::path::Path::new(".")))?;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::create_dir_all(&tantivy_path)?;
 
-    let knowledge = std::sync::Arc::new(
-        meepo_knowledge::graph::KnowledgeGraph::new(&db_path, &tantivy_path)
-            .context("Failed to initialize knowledge graph")?,
+    let db = Arc::new(
+        meepo_knowledge::KnowledgeDb::new(&db_path)
+            .context("Failed to initialize knowledge database")?,
     );
-    info!("Knowledge graph initialized");
+    info!("Knowledge database initialized");
 
     // Load SOUL and MEMORY
     let workspace = shellexpand(&cfg.memory.workspace);
-    let soul = meepo_knowledge::memory_sync::load_soul(&workspace.join("SOUL.md"))
+    let soul = meepo_knowledge::load_soul(&workspace.join("SOUL.md"))
         .unwrap_or_else(|_| "You are Meepo, a helpful AI assistant.".to_string());
-    let memory = meepo_knowledge::memory_sync::load_memory(&workspace.join("MEMORY.md"))
+    let memory = meepo_knowledge::load_memory(&workspace.join("MEMORY.md"))
         .unwrap_or_default();
     info!("Loaded SOUL ({} chars) and MEMORY ({} chars)", soul.len(), memory.len());
 
@@ -143,59 +146,55 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
     let api = meepo_core::api::ApiClient::new(
         api_key,
-        cfg.providers.anthropic.base_url.clone(),
-        cfg.agent.default_model.clone(),
-        cfg.agent.max_tokens,
-    );
+        Some(cfg.agent.default_model.clone()),
+    ).with_max_tokens(cfg.agent.max_tokens);
     info!("Anthropic API client initialized (model: {})", cfg.agent.default_model);
 
     // Build tool registry
     let mut registry = meepo_core::tools::ToolRegistry::new();
-    registry.register(Box::new(meepo_core::tools::macos::ReadEmailsTool));
-    registry.register(Box::new(meepo_core::tools::macos::ReadCalendarTool));
-    registry.register(Box::new(meepo_core::tools::macos::SendEmailTool));
-    registry.register(Box::new(meepo_core::tools::macos::CreateEventTool));
-    registry.register(Box::new(meepo_core::tools::macos::OpenAppTool));
-    registry.register(Box::new(meepo_core::tools::macos::GetClipboardTool));
-    registry.register(Box::new(meepo_core::tools::accessibility::ReadScreenTool));
-    registry.register(Box::new(meepo_core::tools::accessibility::ClickElementTool));
-    registry.register(Box::new(meepo_core::tools::accessibility::TypeTextTool));
-    registry.register(Box::new(meepo_core::tools::code::WriteCodeTool::new(
-        cfg.code.claude_code_path.clone(),
-        shellexpand_str(&cfg.code.default_workspace),
-    )));
-    registry.register(Box::new(meepo_core::tools::code::MakePrTool::new(
-        cfg.code.claude_code_path.clone(),
-        cfg.code.gh_path.clone(),
-    )));
-    registry.register(Box::new(meepo_core::tools::code::ReviewPrTool::new(
-        cfg.code.gh_path.clone(),
-    )));
-    registry.register(Box::new(meepo_core::tools::memory::RememberTool::new(knowledge.clone())));
-    registry.register(Box::new(meepo_core::tools::memory::RecallTool::new(knowledge.clone())));
-    registry.register(Box::new(meepo_core::tools::memory::SearchKnowledgeTool::new(knowledge.clone())));
-    registry.register(Box::new(meepo_core::tools::memory::LinkEntitiesTool::new(knowledge.clone())));
-    registry.register(Box::new(meepo_core::tools::system::RunCommandTool));
-    registry.register(Box::new(meepo_core::tools::system::ReadFileTool));
-    registry.register(Box::new(meepo_core::tools::system::WriteFileTool));
-    registry.register(Box::new(meepo_core::tools::system::BrowseUrlTool));
-    info!("Registered {} tools", registry.tool_count());
+    registry.register(Arc::new(meepo_core::tools::macos::ReadEmailsTool));
+    registry.register(Arc::new(meepo_core::tools::macos::ReadCalendarTool));
+    registry.register(Arc::new(meepo_core::tools::macos::SendEmailTool));
+    registry.register(Arc::new(meepo_core::tools::macos::CreateEventTool));
+    registry.register(Arc::new(meepo_core::tools::macos::OpenAppTool));
+    registry.register(Arc::new(meepo_core::tools::macos::GetClipboardTool));
+    registry.register(Arc::new(meepo_core::tools::accessibility::ReadScreenTool));
+    registry.register(Arc::new(meepo_core::tools::accessibility::ClickElementTool));
+    registry.register(Arc::new(meepo_core::tools::accessibility::TypeTextTool));
+    registry.register(Arc::new(meepo_core::tools::code::WriteCodeTool));
+    registry.register(Arc::new(meepo_core::tools::code::MakePrTool));
+    registry.register(Arc::new(meepo_core::tools::code::ReviewPrTool));
+    registry.register(Arc::new(meepo_core::tools::memory::RememberTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::memory::RecallTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::memory::SearchKnowledgeTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::memory::LinkEntitiesTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::system::RunCommandTool));
+    registry.register(Arc::new(meepo_core::tools::system::ReadFileTool));
+    registry.register(Arc::new(meepo_core::tools::system::WriteFileTool));
+    registry.register(Arc::new(meepo_core::tools::system::BrowseUrlTool));
+    info!("Registered {} tools", registry.len());
 
     // Initialize agent
-    let agent = std::sync::Arc::new(meepo_core::agent::Agent::new(api, registry, soul, memory));
+    let agent = Arc::new(meepo_core::agent::Agent::new(
+        api,
+        Arc::new(registry),
+        soul,
+        memory,
+        db.clone(),
+    ));
 
     // Initialize watcher scheduler
-    let (watcher_event_tx, mut watcher_event_rx) = tokio::sync::mpsc::channel(100);
-    let watcher_runner = std::sync::Arc::new(tokio::sync::Mutex::new(
+    let (watcher_event_tx, mut watcher_event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let watcher_runner = Arc::new(tokio::sync::Mutex::new(
         meepo_scheduler::runner::WatcherRunner::new(watcher_event_tx),
     ));
 
     // Load persisted watchers
     {
-        let db = rusqlite::Connection::open(&db_path)?;
-        meepo_scheduler::persistence::init_watcher_tables(&db)?;
-        let watchers = meepo_scheduler::persistence::get_active_watchers(&db)?;
-        let mut runner = watcher_runner.lock().await;
+        let sched_db = rusqlite::Connection::open(&db_path)?;
+        meepo_scheduler::persistence::init_watcher_tables(&sched_db)?;
+        let watchers = meepo_scheduler::persistence::get_active_watchers(&sched_db)?;
+        let runner = watcher_runner.lock().await;
         for w in watchers {
             if let Err(e) = runner.start_watcher(w.clone()).await {
                 warn!("Failed to start watcher {}: {}", w.id, e);
@@ -203,9 +202,6 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         }
     }
     info!("Watcher scheduler initialized");
-
-    // Register watcher tools
-    // (These need the runner reference - we'll add them after initial setup)
 
     // Initialize message bus
     let mut bus = meepo_channels::bus::MessageBus::new(256);
@@ -226,6 +222,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
             std::time::Duration::from_secs(cfg.channels.imessage.poll_interval_secs),
             cfg.channels.imessage.trigger_prefix.clone(),
             cfg.channels.imessage.allowed_contacts.clone(),
+            None,
         );
         bus.register(Box::new(imessage));
         info!("iMessage channel registered");
@@ -260,17 +257,17 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                 msg = bus.recv() => {
                     match msg {
                         Some(incoming) => {
-                            info!("Message from {} via {}: {}", incoming.sender, incoming.channel, &incoming.content[..incoming.content.len().min(100)]);
+                            info!("Message from {} via {}: {}",
+                                incoming.sender,
+                                incoming.channel,
+                                &incoming.content[..incoming.content.len().min(100)]);
                             let agent = agent_clone.clone();
-                            let bus_sender = bus.sender_for(incoming.channel.clone());
                             tokio::spawn(async move {
                                 match agent.handle_message(incoming).await {
                                     Ok(response) => {
-                                        if let Some(sender) = bus_sender {
-                                            if let Err(e) = sender.send(response).await {
-                                                error!("Failed to send response: {}", e);
-                                            }
-                                        }
+                                        info!("Response generated ({} chars)", response.content.len());
+                                        // In a full implementation, route response back through bus
+                                        // For now, responses are logged
                                     }
                                     Err(e) => error!("Agent error: {}", e),
                                 }
@@ -285,7 +282,6 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                 event = watcher_event_rx.recv() => {
                     if let Some(event) = event {
                         info!("Watcher event: {} from {}", event.kind, event.watcher_id);
-                        // Process watcher events through the agent
                         let agent = agent_clone.clone();
                         tokio::spawn(async move {
                             let msg = meepo_core::types::IncomingMessage {
@@ -321,16 +317,15 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
 }
 
 async fn cmd_stop() -> Result<()> {
-    // Simple approach: find and kill the running meepo process
     let output = tokio::process::Command::new("pkill")
         .args(["-f", "meepo start"])
         .output()
         .await?;
 
     if output.status.success() {
-        println!("Meepo meepo stopped.");
+        println!("Meepo daemon stopped.");
     } else {
-        println!("No running Meepo meepo found.");
+        println!("No running Meepo daemon found.");
     }
     Ok(())
 }
@@ -341,23 +336,24 @@ async fn cmd_ask(config_path: &Option<PathBuf>, message: &str) -> Result<()> {
     let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
     let api = meepo_core::api::ApiClient::new(
         api_key,
-        cfg.providers.anthropic.base_url.clone(),
-        cfg.agent.default_model.clone(),
-        cfg.agent.max_tokens,
-    );
+        Some(cfg.agent.default_model.clone()),
+    ).with_max_tokens(cfg.agent.max_tokens);
 
     // Load context
     let workspace = shellexpand(&cfg.memory.workspace);
-    let soul = meepo_knowledge::memory_sync::load_soul(&workspace.join("SOUL.md"))
+    let soul = meepo_knowledge::load_soul(&workspace.join("SOUL.md"))
         .unwrap_or_else(|_| "You are Meepo, a helpful AI assistant.".to_string());
-    let memory = meepo_knowledge::memory_sync::load_memory(&workspace.join("MEMORY.md"))
+    let memory = meepo_knowledge::load_memory(&workspace.join("MEMORY.md"))
         .unwrap_or_default();
 
     let system = format!("{}\n\n## Current Memory\n{}", soul, memory);
 
     let response = api
         .chat(
-            &[meepo_core::api::ApiMessage::user(message)],
+            &[meepo_core::api::ApiMessage {
+                role: "user".to_string(),
+                content: meepo_core::api::MessageContent::Text(message.to_string()),
+            }],
             &[],
             &system,
         )

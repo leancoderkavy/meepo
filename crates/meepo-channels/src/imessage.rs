@@ -108,59 +108,64 @@ impl IMessageChannel {
             ORDER BY message.ROWID ASC
         "#;
 
-        let mut stmt = conn.prepare(query)?;
-        let mut rows = stmt.query(params![last_rowid])?;
-
+        // Collect all messages from SQLite synchronously (no await while holding rusqlite types)
+        let mut pending_messages = Vec::new();
         let mut new_last_rowid = last_rowid;
-        let mut message_count = 0;
+        {
+            let mut stmt = conn.prepare(query)?;
+            let mut rows = stmt.query(params![last_rowid])?;
 
-        while let Some(row) = rows.next()? {
-            let rowid: i64 = row.get(0)?;
-            let text: String = row.get(1)?;
-            let handle: String = row.get(2)?;
-            let timestamp_str: String = row.get(3)?;
+            while let Some(row) = rows.next()? {
+                let rowid: i64 = row.get(0)?;
+                let text: String = row.get(1)?;
+                let handle: String = row.get(2)?;
+                let timestamp_str: String = row.get(3)?;
 
-            // Update last_rowid
-            new_last_rowid = new_last_rowid.max(rowid);
+                // Update last_rowid
+                new_last_rowid = new_last_rowid.max(rowid);
 
-            // Check if message starts with trigger prefix
-            if !text.starts_with(&self.trigger_prefix) {
-                debug!("Skipping message without trigger prefix: {}", text);
-                continue;
+                // Check if message starts with trigger prefix
+                if !text.starts_with(&self.trigger_prefix) {
+                    debug!("Skipping message without trigger prefix: {}", text);
+                    continue;
+                }
+
+                // Check if contact is allowed
+                if !self.is_allowed_contact(&handle) {
+                    warn!("Ignoring message from unauthorized contact: {}", handle);
+                    continue;
+                }
+
+                // Remove trigger prefix from content
+                let content = text.trim_start_matches(&self.trigger_prefix).trim().to_string();
+
+                // Parse timestamp (fallback to current time if parsing fails)
+                let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .and_then(|dt| dt.and_utc().timestamp_millis().try_into().ok())
+                    .and_then(|ts: i64| chrono::DateTime::from_timestamp_millis(ts))
+                    .unwrap_or_else(Utc::now);
+
+                pending_messages.push((rowid, handle, content, timestamp));
             }
+        } // stmt and rows dropped here — no longer held across await
 
-            // Check if contact is allowed
-            if !self.is_allowed_contact(&handle) {
-                warn!("Ignoring message from unauthorized contact: {}", handle);
-                continue;
-            }
-
-            // Remove trigger prefix from content
-            let content = text.trim_start_matches(&self.trigger_prefix).trim().to_string();
-
-            // Parse timestamp (fallback to current time if parsing fails)
-            let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S")
-                .ok()
-                .and_then(|dt| dt.and_utc().timestamp_millis().try_into().ok())
-                .and_then(|ts: i64| chrono::DateTime::from_timestamp_millis(ts))
-                .unwrap_or_else(Utc::now);
-
+        // Now send messages asynchronously
+        let message_count = pending_messages.len();
+        for (rowid, handle, content, timestamp) in pending_messages {
             let incoming = IncomingMessage {
                 id: format!("imessage_{}", rowid),
                 sender: handle.clone(),
-                content,
+                content: content.clone(),
                 channel: ChannelType::IMessage,
                 timestamp,
             };
 
-            info!("Forwarding iMessage from {}: {}", handle, incoming.content);
+            info!("Forwarding iMessage from {}: {}", handle, content);
 
-            // Send to the bus
             if let Err(e) = tx.send(incoming).await {
                 error!("Failed to send iMessage to bus: {}", e);
             }
-
-            message_count += 1;
         }
 
         // Update last_rowid if we processed any messages

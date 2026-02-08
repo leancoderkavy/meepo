@@ -9,7 +9,7 @@ use tantivy::{
     schema::*,
     Index, IndexWriter, ReloadPolicy, TantivyDocument,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::sqlite::KnowledgeDb;
 
@@ -27,6 +27,7 @@ pub struct SearchResult {
 /// Tantivy search index wrapper
 pub struct TantivyIndex {
     index: Index,
+    #[allow(dead_code)]
     schema: Schema,
     id_field: Field,
     content_field: Field,
@@ -84,7 +85,7 @@ impl TantivyIndex {
             tantivy::Term::from_field_text(self.id_field, id),
             tantivy::schema::IndexRecordOption::Basic,
         );
-        writer.delete_query(Box::new(id_query));
+        let _ = writer.delete_query(Box::new(id_query));
 
         // Create document
         let mut doc = TantivyDocument::default();
@@ -101,7 +102,7 @@ impl TantivyIndex {
     }
 
     /// Search the index
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>> {
         let reader = self
             .index
             .reader_builder()
@@ -113,7 +114,7 @@ impl TantivyIndex {
         // Parse query
         let query_parser = QueryParser::for_index(&self.index, vec![self.content_field]);
         let query = query_parser
-            .parse_query(query)
+            .parse_query(query_str)
             .context("Failed to parse search query")?;
 
         // Search
@@ -121,23 +122,23 @@ impl TantivyIndex {
 
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
-            let retrieved_doc = searcher.doc(doc_address)?;
+            let retrieved_doc: TantivyDocument = searcher.doc(doc_address)?;
 
             let id = retrieved_doc
                 .get_first(self.id_field)
-                .and_then(|v| v.as_str())
+                .and_then(|v: &tantivy::schema::OwnedValue| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
             let content = retrieved_doc
                 .get_first(self.content_field)
-                .and_then(|v| v.as_str())
+                .and_then(|v: &tantivy::schema::OwnedValue| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
             let entity_type = retrieved_doc
                 .get_first(self.entity_type_field)
-                .and_then(|v| v.as_str())
+                .and_then(|v: &tantivy::schema::OwnedValue| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
@@ -157,7 +158,7 @@ impl TantivyIndex {
             });
         }
 
-        debug!("Search for '{}' returned {} results", query, results.len());
+        debug!("Search for '{}' returned {} results", query_str, results.len());
         Ok(results)
     }
 
@@ -170,7 +171,7 @@ impl TantivyIndex {
             tantivy::schema::IndexRecordOption::Basic,
         );
 
-        writer.delete_query(Box::new(id_query));
+        let _ = writer.delete_query(Box::new(id_query));
         writer.commit()?;
 
         debug!("Deleted document: {}", id);
@@ -187,8 +188,9 @@ impl TantivyIndex {
         // Delete all documents
         writer.delete_all_documents()?;
 
+        let entity_count = entities.len();
         // Index all entities
-        for entity in entities {
+        for entity in &entities {
             let content = format!(
                 "{} {} {}",
                 entity.name,
@@ -210,7 +212,7 @@ impl TantivyIndex {
 
         writer.commit()?;
 
-        info!("Reindexed {} entities", entities.len());
+        info!("Reindexed {} entities", entity_count);
         Ok(())
     }
 
@@ -230,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_index_and_search() -> Result<()> {
-        let temp_path = env::temp_dir().join("test_tantivy_index");
+        let temp_path = env::temp_dir().join(format!("test_tantivy_index_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&temp_path);
 
         let index = TantivyIndex::new(&temp_path)?;
@@ -269,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_delete_document() -> Result<()> {
-        let temp_path = env::temp_dir().join("test_tantivy_delete");
+        let temp_path = env::temp_dir().join(format!("test_tantivy_delete_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&temp_path);
 
         let index = TantivyIndex::new(&temp_path)?;

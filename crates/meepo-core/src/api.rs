@@ -145,7 +145,7 @@ impl ApiClient {
 
                     if tool_results.is_empty() {
                         warn!("Stop reason was tool_use but no tool calls found");
-                        break;
+                        return Err(anyhow!("Stop reason was tool_use but no tool calls found"));
                     }
 
                     // Add tool results to conversation

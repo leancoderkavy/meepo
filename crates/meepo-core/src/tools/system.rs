@@ -451,28 +451,62 @@ impl ToolHandler for BrowseUrlTool {
 
         let client = reqwest::Client::builder()
             .user_agent("meepo-agent/1.0")
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("Failed to create HTTP client")?;
 
-        let mut request = client.get(url);
+        // Manual redirect following with validation
+        let mut current_url = url.to_string();
+        let mut redirects = 0;
+        let max_redirects = 5;
 
-        // Add custom headers if provided (with CRLF injection protection)
-        if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
-            for (key, value) in headers {
-                if let Some(value_str) = value.as_str() {
-                    // Validate that header name and value don't contain CRLF sequences
-                    if key.contains('\r') || key.contains('\n') || value_str.contains('\r') || value_str.contains('\n') {
-                        warn!("Skipping header '{}' due to CRLF characters", key);
-                        continue;
+        let response = loop {
+            let mut request = client.get(&current_url);
+
+            // Add custom headers if provided (with CRLF injection protection)
+            if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
+                for (key, value) in headers {
+                    if let Some(value_str) = value.as_str() {
+                        // Validate that header name and value don't contain CRLF sequences
+                        if key.contains('\r') || key.contains('\n') || value_str.contains('\r') || value_str.contains('\n') {
+                            warn!("Skipping header '{}' due to CRLF characters", key);
+                            continue;
+                        }
+                        request = request.header(key, value_str);
                     }
-                    request = request.header(key, value_str);
                 }
             }
-        }
 
-        let response = request.send()
-            .await
-            .context("Failed to fetch URL")?;
+            let resp = request.send()
+                .await
+                .context("Failed to fetch URL")?;
+
+            if resp.status().is_redirection() {
+                redirects += 1;
+                if redirects > max_redirects {
+                    return Ok("Too many redirects".to_string());
+                }
+                if let Some(location) = resp.headers().get("location") {
+                    let redirect_url = location.to_str()
+                        .map_err(|_| anyhow::anyhow!("Invalid redirect URL"))?;
+                    // Resolve relative redirects
+                    let resolved = if redirect_url.starts_with("http") {
+                        redirect_url.to_string()
+                    } else {
+                        format!("{}/{}", current_url.trim_end_matches('/'), redirect_url.trim_start_matches('/'))
+                    };
+                    if is_safe_url(&resolved).is_err() {
+                        return Ok(format!("Blocked redirect to unsafe URL: {}", resolved));
+                    }
+                    current_url = resolved;
+                    continue;
+                } else {
+                    return Ok("Redirect without Location header".to_string());
+                }
+            }
+            break resp;
+        };
 
         let status = response.status();
         if !status.is_success() {

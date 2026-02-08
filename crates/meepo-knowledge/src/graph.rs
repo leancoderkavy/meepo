@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::sqlite::{Entity, KnowledgeDb, Relationship};
@@ -20,7 +21,7 @@ pub struct EntityContext {
 
 /// Knowledge graph combining SQLite and Tantivy
 pub struct KnowledgeGraph {
-    db: KnowledgeDb,
+    db: Arc<KnowledgeDb>,
     index: TantivyIndex,
 }
 
@@ -33,7 +34,7 @@ impl KnowledgeGraph {
             index_path.as_ref()
         );
 
-        let db = KnowledgeDb::new(db_path)?;
+        let db = Arc::new(KnowledgeDb::new(db_path)?);
         let index = TantivyIndex::new(index_path)?;
 
         Ok(Self { db, index })
@@ -268,6 +269,19 @@ impl KnowledgeGraph {
     /// Get all entities
     pub fn get_all_entities(&self) -> Result<Vec<Entity>> {
         self.db.get_all_entities()
+    }
+
+    /// Get a reference to the underlying database
+    ///
+    /// This allows access to the database for operations that don't need
+    /// the full knowledge graph functionality, avoiding duplicate connections.
+    pub fn db(&self) -> Arc<KnowledgeDb> {
+        Arc::clone(&self.db)
+    }
+
+    /// Clean up old conversations (keep only last N days)
+    pub fn cleanup_old_conversations(&self, retain_days: u32) -> Result<usize> {
+        self.db.cleanup_old_conversations(retain_days)
     }
 }
 

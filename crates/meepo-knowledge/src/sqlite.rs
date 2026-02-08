@@ -570,6 +570,22 @@ impl KnowledgeDb {
         debug!("Deleted watcher {}", id);
         Ok(())
     }
+
+    /// Clean up old conversations (keep only last N days)
+    pub fn cleanup_old_conversations(&self, retain_days: u32) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            warn!("Database mutex was poisoned, recovering");
+            poisoned.into_inner()
+        });
+        let deleted = conn.execute(
+            "DELETE FROM conversations WHERE created_at < datetime('now', ?)",
+            params![format!("-{} days", retain_days)],
+        )?;
+        if deleted > 0 {
+            info!("Cleaned up {} old conversations", deleted);
+        }
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]

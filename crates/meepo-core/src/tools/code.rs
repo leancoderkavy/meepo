@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use anyhow::{Result, Context};
+use std::time::Duration;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
@@ -47,14 +48,18 @@ impl ToolHandler for WriteCodeTool {
 
         debug!("Executing code task in workspace: {}", workspace);
 
-        let output = Command::new("claude")
-            .arg("--print")
-            .arg("--workspace")
-            .arg(workspace)
-            .arg(task)
-            .output()
-            .await
-            .context("Failed to execute claude CLI")?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(300),
+            Command::new("claude")
+                .arg("--print")
+                .arg("--workspace")
+                .arg(workspace)
+                .arg(task)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Claude CLI timed out after 5 minutes"))?
+        .context("Failed to execute claude CLI")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -117,12 +122,16 @@ impl ToolHandler for MakePrTool {
         debug!("Creating PR in repo: {} with branch: {}", repo, branch_name);
 
         // Get original branch for rollback
-        let original_branch_output = Command::new("git")
-            .current_dir(repo)
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .await
-            .context("Failed to get current branch")?;
+        let original_branch_output = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("git")
+                .current_dir(repo)
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Git command timed out after 60 seconds"))?
+        .context("Failed to get current branch")?;
 
         let original_branch = if original_branch_output.status.success() {
             String::from_utf8_lossy(&original_branch_output.stdout)
@@ -146,34 +155,44 @@ impl ToolHandler for MakePrTool {
         let cleanup = |branch_created: bool, branch_pushed: bool| async move {
             if branch_pushed {
                 warn!("Cleaning up: deleting remote branch {}", branch_name_clone);
-                let _ = Command::new("git")
-                    .current_dir(&repo_clone)
-                    .args(["push", "origin", "--delete", &branch_name_clone])
-                    .output()
-                    .await;
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(60),
+                    Command::new("git")
+                        .current_dir(&repo_clone)
+                        .args(["push", "origin", "--delete", &branch_name_clone])
+                        .output()
+                ).await;
             }
             if branch_created {
                 warn!("Cleaning up: switching back to {} and deleting local branch {}", original_branch_clone, branch_name_clone);
-                let _ = Command::new("git")
-                    .current_dir(&repo_clone)
-                    .args(["checkout", &original_branch_clone])
-                    .output()
-                    .await;
-                let _ = Command::new("git")
-                    .current_dir(&repo_clone)
-                    .args(["branch", "-D", &branch_name_clone])
-                    .output()
-                    .await;
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(60),
+                    Command::new("git")
+                        .current_dir(&repo_clone)
+                        .args(["checkout", &original_branch_clone])
+                        .output()
+                ).await;
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(60),
+                    Command::new("git")
+                        .current_dir(&repo_clone)
+                        .args(["branch", "-D", &branch_name_clone])
+                        .output()
+                ).await;
             }
         };
 
         // Create branch
-        let create_branch = Command::new("git")
-            .current_dir(repo)
-            .args(["checkout", "-b", &branch_name])
-            .output()
-            .await
-            .context("Failed to create branch")?;
+        let create_branch = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("git")
+                .current_dir(repo)
+                .args(["checkout", "-b", &branch_name])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Git command timed out after 60 seconds"))?
+        .context("Failed to create branch")?;
 
         if !create_branch.status.success() {
             let error = String::from_utf8_lossy(&create_branch.stderr).to_string();
@@ -182,20 +201,18 @@ impl ToolHandler for MakePrTool {
         branch_created = true;
 
         // Execute task with Claude Code
-        let code_output = Command::new("claude")
-            .arg("--print")
-            .arg("--workspace")
-            .arg(repo)
-            .arg(task)
-            .output()
-            .await;
+        let code_output = tokio::time::timeout(
+            Duration::from_secs(300),
+            Command::new("claude")
+                .arg("--print")
+                .arg("--workspace")
+                .arg(repo)
+                .arg(task)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Claude CLI timed out after 5 minutes"))??;
 
-        if let Err(e) = code_output {
-            cleanup(branch_created, branch_pushed).await;
-            return Err(anyhow::anyhow!("Failed to execute claude CLI: {}", e));
-        }
-
-        let code_output = code_output.unwrap();
         if !code_output.status.success() {
             let error = String::from_utf8_lossy(&code_output.stderr).to_string();
             cleanup(branch_created, branch_pushed).await;
@@ -203,42 +220,38 @@ impl ToolHandler for MakePrTool {
         }
 
         // Commit changes
-        let stage_result = Command::new("git")
-            .current_dir(repo)
-            .args(["add", "-A"])
-            .output()
-            .await;
-
-        if let Err(e) = stage_result {
-            cleanup(branch_created, branch_pushed).await;
-            return Err(anyhow::anyhow!("Failed to stage changes: {}", e));
-        }
+        let _stage_result = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("git")
+                .current_dir(repo)
+                .args(["add", "-A"])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Git command timed out after 60 seconds"))??;
 
         let commit_msg = format!("feat: {}\n\nCo-Authored-By: meepo <meepo@anthropic.com>", task);
-        let commit_result = Command::new("git")
-            .current_dir(repo)
-            .args(["commit", "-m", &commit_msg])
-            .output()
-            .await;
-
-        if let Err(e) = commit_result {
-            cleanup(branch_created, branch_pushed).await;
-            return Err(anyhow::anyhow!("Failed to commit changes: {}", e));
-        }
+        let _commit_result = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("git")
+                .current_dir(repo)
+                .args(["commit", "-m", &commit_msg])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Git command timed out after 60 seconds"))??;
 
         // Push branch
-        let push_result = Command::new("git")
-            .current_dir(repo)
-            .args(["push", "-u", "origin", &branch_name])
-            .output()
-            .await;
+        let push_output = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("git")
+                .current_dir(repo)
+                .args(["push", "-u", "origin", &branch_name])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Git command timed out after 60 seconds"))??;
 
-        if let Err(e) = push_result {
-            cleanup(branch_created, branch_pushed).await;
-            return Err(anyhow::anyhow!("Failed to push branch: {}", e));
-        }
-
-        let push_output = push_result.unwrap();
         if !push_output.status.success() {
             cleanup(branch_created, branch_pushed).await;
             let error = String::from_utf8_lossy(&push_output.stderr).to_string();
@@ -247,22 +260,20 @@ impl ToolHandler for MakePrTool {
         branch_pushed = true;
 
         // Create PR using gh
-        let pr_output = Command::new("gh")
-            .current_dir(repo)
-            .args([
-                "pr", "create",
-                "--title", task,
-                "--body", "Automated PR created by meepo agent"
-            ])
-            .output()
-            .await;
+        let pr_output = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("gh")
+                .current_dir(repo)
+                .args([
+                    "pr", "create",
+                    "--title", task,
+                    "--body", "Automated PR created by meepo agent"
+                ])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("GitHub CLI timed out after 60 seconds"))??;
 
-        if let Err(e) = pr_output {
-            cleanup(branch_created, branch_pushed).await;
-            return Err(anyhow::anyhow!("Failed to create PR: {}", e));
-        }
-
-        let pr_output = pr_output.unwrap();
         if pr_output.status.success() {
             let result = String::from_utf8_lossy(&pr_output.stdout).to_string();
             Ok(format!("PR created successfully:\n{}", result))
@@ -453,12 +464,16 @@ impl ToolHandler for ReviewPrTool {
         debug!("Reviewing PR #{} in repo: {}", pr_number, repo);
 
         // Get PR details
-        let pr_view = Command::new("gh")
-            .current_dir(repo)
-            .args(["pr", "view", &pr_number.to_string()])
-            .output()
-            .await
-            .context("Failed to view PR")?;
+        let pr_view = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("gh")
+                .current_dir(repo)
+                .args(["pr", "view", &pr_number.to_string()])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("GitHub CLI timed out after 60 seconds"))?
+        .context("Failed to view PR")?;
 
         let pr_details = if pr_view.status.success() {
             String::from_utf8_lossy(&pr_view.stdout).to_string()
@@ -467,12 +482,16 @@ impl ToolHandler for ReviewPrTool {
         };
 
         // Get PR diff
-        let pr_diff = Command::new("gh")
-            .current_dir(repo)
-            .args(["pr", "diff", &pr_number.to_string()])
-            .output()
-            .await
-            .context("Failed to get PR diff")?;
+        let pr_diff = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("gh")
+                .current_dir(repo)
+                .args(["pr", "diff", &pr_number.to_string()])
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("GitHub CLI timed out after 60 seconds"))?
+        .context("Failed to get PR diff")?;
 
         let diff_content = if pr_diff.status.success() {
             String::from_utf8_lossy(&pr_diff.stdout).to_string()

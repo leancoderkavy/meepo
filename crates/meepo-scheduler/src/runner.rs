@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::{NaiveTime, Utc};
 use std::str::FromStr;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
+use rusqlite::Connection;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
@@ -178,6 +179,14 @@ impl WatcherRunner {
     /// Check if a watcher is currently running
     pub async fn is_running(&self, id: &str) -> bool {
         self.active_tasks.read().await.contains_key(id)
+    }
+
+    /// Clean up old watcher events from the database
+    ///
+    /// This should be called periodically (e.g., on startup or daily) to prevent
+    /// the watcher_events table from growing unbounded.
+    pub fn cleanup_old_events(&self, conn: &Connection, retain_days: u32) -> Result<usize> {
+        crate::persistence::cleanup_old_events(conn, retain_days)
     }
 
     /// Check if we're within active hours

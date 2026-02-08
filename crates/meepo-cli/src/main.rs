@@ -134,11 +134,8 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
             .context("Failed to initialize knowledge graph")?,
     );
 
-    // Also keep a reference to just the DB for backward compatibility
-    let db = Arc::new(
-        meepo_knowledge::KnowledgeDb::new(&db_path)
-            .context("Failed to initialize knowledge database")?,
-    );
+    // Use the graph's internal DB to avoid duplicate SQLite connections to the same file
+    let db = knowledge_graph.db();
     info!("Knowledge database and Tantivy index initialized");
 
     // Load SOUL and MEMORY
@@ -156,6 +153,9 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         Some(cfg.agent.default_model.clone()),
     ).with_max_tokens(cfg.agent.max_tokens);
     info!("Anthropic API client initialized (model: {})", cfg.agent.default_model);
+
+    // Initialize watcher command channel (needed for tool registration)
+    let (watcher_command_tx, mut watcher_command_rx) = tokio::sync::mpsc::channel::<meepo_core::tools::watchers::WatcherCommand>(100);
 
     // Build tool registry
     let mut registry = meepo_core::tools::ToolRegistry::new();
@@ -180,6 +180,9 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::system::ReadFileTool));
     registry.register(Arc::new(meepo_core::tools::system::WriteFileTool));
     registry.register(Arc::new(meepo_core::tools::system::BrowseUrlTool));
+    registry.register(Arc::new(meepo_core::tools::watchers::CreateWatcherTool::new(db.clone(), watcher_command_tx.clone())));
+    registry.register(Arc::new(meepo_core::tools::watchers::ListWatchersTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::watchers::CancelWatcherTool::new(db.clone(), watcher_command_tx.clone())));
     info!("Registered {} tools", registry.len());
 
     // Initialize agent
@@ -259,6 +262,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     // Main event loop
     let agent_clone = agent.clone();
     let cancel_clone = cancel.clone();
+    let watcher_runner_clone = watcher_runner.clone();
     let main_loop = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -293,6 +297,40 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                         }
                     }
                 }
+                cmd = watcher_command_rx.recv() => {
+                    if let Some(command) = cmd {
+                        let runner = watcher_runner_clone.clone();
+                        tokio::spawn(async move {
+                            use meepo_core::tools::watchers::WatcherCommand;
+                            match command {
+                                WatcherCommand::Create { kind: _, config, action, reply_channel } => {
+                                    let watcher = meepo_scheduler::watcher::Watcher::new(
+                                        match serde_json::from_value(config) {
+                                            Ok(k) => k,
+                                            Err(e) => {
+                                                error!("Failed to deserialize watcher kind: {}", e);
+                                                return;
+                                            }
+                                        },
+                                        action,
+                                        reply_channel,
+                                    );
+                                    if let Err(e) = runner.lock().await.start_watcher(watcher).await {
+                                        error!("Failed to start watcher: {}", e);
+                                    }
+                                }
+                                WatcherCommand::Cancel { id } => {
+                                    if let Err(e) = runner.lock().await.stop_watcher(&id).await {
+                                        error!("Failed to stop watcher {}: {}", id, e);
+                                    }
+                                }
+                                WatcherCommand::List => {
+                                    // List command is handled synchronously by the tool via DB query
+                                }
+                            }
+                        });
+                    }
+                }
                 event = watcher_event_rx.recv() => {
                     if let Some(event) = event {
                         info!("Watcher event: {} from {}", event.kind, event.watcher_id);
@@ -305,8 +343,14 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                 channel: meepo_core::types::ChannelType::Internal,
                                 timestamp: chrono::Utc::now(),
                             };
-                            if let Err(e) = agent.handle_message(msg).await {
-                                error!("Failed to handle watcher event: {}", e);
+                            match agent.handle_message(msg).await {
+                                Ok(response) => {
+                                    // Log the response instead of trying to send through bus
+                                    // since Internal channel has no handler and watcher events
+                                    // are informational notifications
+                                    info!("Watcher {} response: {}", event.watcher_id, response.content);
+                                }
+                                Err(e) => error!("Failed to handle watcher event: {}", e),
                             }
                         });
                     }
@@ -395,12 +439,20 @@ fn shellexpand_str(s: &str) -> String {
             result = format!("{}{}", home.display(), &result[1..]);
         }
     }
-    // Expand ${VAR} patterns
-    while let Some(start) = result.find("${") {
-        if let Some(end) = result[start..].find('}') {
-            let var_name = &result[start + 2..start + end];
-            let value = std::env::var(var_name).unwrap_or_default();
-            result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
+    // Expand ${VAR} patterns with position tracking to avoid infinite loops
+    let mut pos = 0;
+    while pos < result.len() {
+        if let Some(start) = result[pos..].find("${") {
+            let abs_start = pos + start;
+            if let Some(end) = result[abs_start..].find('}') {
+                let var_name = &result[abs_start + 2..abs_start + end];
+                let value = std::env::var(var_name).unwrap_or_default();
+                let value_len = value.len();
+                result = format!("{}{}{}", &result[..abs_start], value, &result[abs_start + end + 1..]);
+                pos = abs_start + value_len; // Skip past the expanded value
+            } else {
+                break;
+            }
         } else {
             break;
         }

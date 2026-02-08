@@ -4,10 +4,20 @@ use async_trait::async_trait;
 use serde_json::Value;
 use anyhow::{Result, Context};
 use tokio::process::Command;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 use super::{ToolHandler, json_schema};
 use super::macos::sanitize_applescript_string;
+
+/// Allowlist of valid AppleScript UI element types
+const VALID_ELEMENT_TYPES: &[&str] = &[
+    "button", "checkbox", "radio button", "text field", "text area",
+    "pop up button", "menu item", "menu button", "slider", "tab group",
+    "table", "outline", "list", "scroll area", "group", "window",
+    "sheet", "toolbar", "static text", "image", "link", "cell", "row",
+    "column", "combo box", "incrementor", "relevance indicator",
+];
 
 /// Read screen information (focused app and window)
 pub struct ReadScreenTool;
@@ -46,12 +56,16 @@ tell application "System Events"
 end tell
 "#;
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Accessibility command timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -101,6 +115,11 @@ impl ToolHandler for ClickElementTool {
             .and_then(|v| v.as_str())
             .unwrap_or("button");
 
+        // Validate element_type against allowlist (case-insensitive)
+        if !VALID_ELEMENT_TYPES.iter().any(|&valid| valid.eq_ignore_ascii_case(element_type)) {
+            return Err(anyhow::anyhow!("Invalid element type: {}", element_type));
+        }
+
         debug!("Clicking {} element: {}", element_type, element_name);
 
         // Sanitize input to prevent AppleScript injection
@@ -120,12 +139,16 @@ tell application "System Events"
 end tell
 "#, element_type, safe_element_name);
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Accessibility command timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
@@ -184,12 +207,16 @@ tell application "System Events"
 end tell
 "#, safe_text.replace('\n', "\" & return & \""));
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .context("Failed to execute osascript")?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Accessibility command timed out after 30 seconds"))?
+        .context("Failed to execute osascript")?;
 
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();

@@ -206,11 +206,19 @@ impl MeepoConfig {
 
 fn expand_env_vars(s: &str) -> String {
     let mut result = s.to_string();
-    while let Some(start) = result.find("${") {
-        if let Some(end) = result[start..].find('}') {
-            let var_name = &result[start + 2..start + end].to_string();
-            let value = std::env::var(var_name).unwrap_or_default();
-            result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
+    let mut pos = 0;
+    while pos < result.len() {
+        if let Some(start) = result[pos..].find("${") {
+            let abs_start = pos + start;
+            if let Some(end) = result[abs_start..].find('}') {
+                let var_name = result[abs_start + 2..abs_start + end].to_string();
+                let value = std::env::var(&var_name).unwrap_or_default();
+                let value_len = value.len();
+                result = format!("{}{}{}", &result[..abs_start], value, &result[abs_start + end + 1..]);
+                pos = abs_start + value_len; // Skip past the expanded value
+            } else {
+                break;
+            }
         } else {
             break;
         }

@@ -12,6 +12,8 @@ pub struct MeepoConfig {
     pub watchers: WatchersConfig,
     pub code: CodeConfig,
     pub memory: MemoryConfig,
+    #[serde(default = "default_orchestrator_config")]
+    pub orchestrator: OrchestratorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +157,36 @@ fn default_workspace() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     pub workspace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorConfig {
+    #[serde(default = "default_max_concurrent_subtasks")]
+    pub max_concurrent_subtasks: usize,
+    #[serde(default = "default_max_subtasks_per_request")]
+    pub max_subtasks_per_request: usize,
+    #[serde(default = "default_parallel_timeout_secs")]
+    pub parallel_timeout_secs: u64,
+    #[serde(default = "default_background_timeout_secs")]
+    pub background_timeout_secs: u64,
+    #[serde(default = "default_max_background_groups")]
+    pub max_background_groups: usize,
+}
+
+fn default_max_concurrent_subtasks() -> usize { 5 }
+fn default_max_subtasks_per_request() -> usize { 10 }
+fn default_parallel_timeout_secs() -> u64 { 120 }
+fn default_background_timeout_secs() -> u64 { 600 }
+fn default_max_background_groups() -> usize { 3 }
+
+fn default_orchestrator_config() -> OrchestratorConfig {
+    OrchestratorConfig {
+        max_concurrent_subtasks: default_max_concurrent_subtasks(),
+        max_subtasks_per_request: default_max_subtasks_per_request(),
+        parallel_timeout_secs: default_parallel_timeout_secs(),
+        background_timeout_secs: default_background_timeout_secs(),
+        max_background_groups: default_max_background_groups(),
+    }
 }
 
 pub fn config_dir() -> PathBuf {

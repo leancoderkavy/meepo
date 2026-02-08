@@ -147,3 +147,19 @@ default_workspace = "~/Coding"           # Default directory for code operations
 
 [memory]
 workspace = "~/.meepo/workspace"
+
+
+# =============================================================================
+# Sub-Agent Orchestrator
+# =============================================================================
+[orchestrator]
+# Maximum sub-tasks running concurrently within a single delegation
+max_concurrent_subtasks = 5
+# Maximum total sub-tasks per single delegate_tasks call
+max_subtasks_per_request = 10
+# Timeout per sub-task in parallel mode (seconds)
+parallel_timeout_secs = 120
+# Timeout per sub-task in background mode (seconds)
+background_timeout_secs = 600
+# Maximum background task groups running simultaneously
+max_background_groups = 3

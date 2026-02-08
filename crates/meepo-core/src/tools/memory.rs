@@ -269,3 +269,143 @@ impl ToolHandler for SearchKnowledgeTool {
         Ok(output)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+    use tempfile::TempDir;
+
+    fn setup() -> (Arc<meepo_knowledge::KnowledgeDb>, TempDir) {
+        let temp = TempDir::new().unwrap();
+        let db = Arc::new(meepo_knowledge::KnowledgeDb::new(&temp.path().join("test.db")).unwrap());
+        (db, temp)
+    }
+
+    #[test]
+    fn test_remember_tool_schema() {
+        let (db, _temp) = setup();
+        let tool = RememberTool::new(db);
+        assert_eq!(tool.name(), "remember");
+        assert!(!tool.description().is_empty());
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_remember_and_recall() {
+        let (db, _temp) = setup();
+        let remember = RememberTool::new(db.clone());
+        let recall = RecallTool::new(db);
+
+        // Remember something
+        let result = remember.execute(serde_json::json!({
+            "name": "Rust programming",
+            "entity_type": "concept",
+            "metadata": {"detail": "systems language"}
+        })).await.unwrap();
+        assert!(result.contains("Remembered"));
+
+        // Recall it
+        let result = recall.execute(serde_json::json!({
+            "query": "Rust"
+        })).await.unwrap();
+        assert!(result.contains("Rust programming"));
+    }
+
+    #[tokio::test]
+    async fn test_remember_missing_name() {
+        let (db, _temp) = setup();
+        let tool = RememberTool::new(db);
+        let result = tool.execute(serde_json::json!({
+            "entity_type": "concept"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recall_empty_results() {
+        let (db, _temp) = setup();
+        let tool = RecallTool::new(db);
+        let result = tool.execute(serde_json::json!({
+            "query": "nonexistent_xyz_12345"
+        })).await.unwrap();
+        assert!(result.contains("No") || result.contains("no") || result.is_empty() || result.contains("Found 0"));
+    }
+
+    #[tokio::test]
+    async fn test_link_entities() {
+        let (db, _temp) = setup();
+        let remember = RememberTool::new(db.clone());
+        let link = LinkEntitiesTool::new(db);
+
+        // Create two entities
+        let r1 = remember.execute(serde_json::json!({
+            "name": "Alice",
+            "entity_type": "person"
+        })).await.unwrap();
+
+        let r2 = remember.execute(serde_json::json!({
+            "name": "Bob",
+            "entity_type": "person"
+        })).await.unwrap();
+
+        // Extract IDs from responses (format: "Remembered 'X' with ID: <uuid>")
+        let id1 = r1.split("ID: ").nth(1).unwrap_or("").trim();
+        let id2 = r2.split("ID: ").nth(1).unwrap_or("").trim();
+
+        if !id1.is_empty() && !id2.is_empty() {
+            let result = link.execute(serde_json::json!({
+                "source_id": id1,
+                "target_id": id2,
+                "relation_type": "knows"
+            })).await.unwrap();
+            assert!(result.contains("Created") || result.contains("relationship"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_tool() {
+        let (db, _temp) = setup();
+        let remember = RememberTool::new(db.clone());
+        let search = SearchKnowledgeTool::new(db);
+
+        // Add some data
+        remember.execute(serde_json::json!({
+            "name": "Python language",
+            "entity_type": "concept"
+        })).await.unwrap();
+
+        let result = search.execute(serde_json::json!({
+            "query": "Python"
+        })).await.unwrap();
+        assert!(result.contains("Python"));
+    }
+
+    #[test]
+    fn test_recall_tool_schema() {
+        let (db, _temp) = setup();
+        let tool = RecallTool::new(db);
+        assert_eq!(tool.name(), "recall");
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_link_entities_tool_schema() {
+        let (db, _temp) = setup();
+        let tool = LinkEntitiesTool::new(db);
+        assert_eq!(tool.name(), "link_entities");
+        let schema = tool.input_schema();
+        let props = schema.get("properties").unwrap();
+        assert!(props.get("source_id").is_some());
+        assert!(props.get("target_id").is_some());
+    }
+
+    #[test]
+    fn test_search_knowledge_tool_schema() {
+        let (db, _temp) = setup();
+        let tool = SearchKnowledgeTool::new(db);
+        assert_eq!(tool.name(), "search_knowledge");
+    }
+}

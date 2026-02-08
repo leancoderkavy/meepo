@@ -194,3 +194,46 @@ end tell
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+
+    #[test]
+    fn test_read_screen_schema() {
+        let tool = ReadScreenTool;
+        assert_eq!(tool.name(), "read_screen");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[test]
+    fn test_click_element_schema() {
+        let tool = ClickElementTool;
+        assert_eq!(tool.name(), "click_element");
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_type_text_schema() {
+        let tool = TypeTextTool;
+        assert_eq!(tool.name(), "type_text");
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_click_element_missing_params() {
+        let tool = ClickElementTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_type_text_missing_params() {
+        let tool = TypeTextTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+}

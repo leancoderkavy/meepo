@@ -389,3 +389,87 @@ impl ToolHandler for GetClipboardTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+
+    #[test]
+    fn test_read_emails_schema() {
+        let tool = ReadEmailsTool;
+        assert_eq!(tool.name(), "read_emails");
+        assert!(!tool.description().is_empty());
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_read_calendar_schema() {
+        let tool = ReadCalendarTool;
+        assert_eq!(tool.name(), "read_calendar");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[test]
+    fn test_send_email_schema() {
+        let tool = SendEmailTool;
+        assert_eq!(tool.name(), "send_email");
+        let schema = tool.input_schema();
+        let required: Vec<String> = serde_json::from_value(
+            schema.get("required").cloned().unwrap_or(serde_json::json!([]))
+        ).unwrap_or_default();
+        assert!(required.contains(&"to".to_string()));
+        assert!(required.contains(&"subject".to_string()));
+        assert!(required.contains(&"body".to_string()));
+    }
+
+    #[test]
+    fn test_create_event_schema() {
+        let tool = CreateEventTool;
+        assert_eq!(tool.name(), "create_calendar_event");
+        let schema = tool.input_schema();
+        let required: Vec<String> = serde_json::from_value(
+            schema.get("required").cloned().unwrap_or(serde_json::json!([]))
+        ).unwrap_or_default();
+        assert!(required.contains(&"summary".to_string()));
+        assert!(required.contains(&"start_time".to_string()));
+    }
+
+    #[test]
+    fn test_open_app_schema() {
+        let tool = OpenAppTool;
+        assert_eq!(tool.name(), "open_app");
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_get_clipboard_schema() {
+        let tool = GetClipboardTool;
+        assert_eq!(tool.name(), "get_clipboard");
+    }
+
+    #[tokio::test]
+    async fn test_send_email_missing_params() {
+        let tool = SendEmailTool;
+        let result = tool.execute(serde_json::json!({
+            "to": "test@test.com"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_event_missing_params() {
+        let tool = CreateEventTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_open_app_missing_params() {
+        let tool = OpenAppTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+}

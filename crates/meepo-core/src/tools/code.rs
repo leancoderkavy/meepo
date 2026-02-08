@@ -272,3 +272,58 @@ impl ToolHandler for ReviewPrTool {
         Ok(review)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+
+    #[test]
+    fn test_write_code_schema() {
+        let tool = WriteCodeTool;
+        assert_eq!(tool.name(), "write_code");
+        assert!(!tool.description().is_empty());
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_make_pr_schema() {
+        let tool = MakePrTool;
+        assert_eq!(tool.name(), "make_pr");
+        let schema = tool.input_schema();
+        let required: Vec<String> = serde_json::from_value(
+            schema.get("required").cloned().unwrap_or(serde_json::json!([]))
+        ).unwrap_or_default();
+        assert!(required.contains(&"task".to_string()));
+    }
+
+    #[test]
+    fn test_review_pr_schema() {
+        let tool = ReviewPrTool;
+        assert_eq!(tool.name(), "review_pr");
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_write_code_missing_task() {
+        let tool = WriteCodeTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_make_pr_missing_task() {
+        let tool = MakePrTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_review_pr_missing_params() {
+        let tool = ReviewPrTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+}

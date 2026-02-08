@@ -303,3 +303,72 @@ impl MessageChannel for IMessageChannel {
         ChannelType::IMessage
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_contact_phone() {
+        assert_eq!(
+            IMessageChannel::normalize_contact("+1 (555) 123-4567"),
+            "15551234567"
+        );
+    }
+
+    #[test]
+    fn test_normalize_contact_email() {
+        assert_eq!(
+            IMessageChannel::normalize_contact("User@Example.COM"),
+            "user@examplecom"
+        );
+    }
+
+    #[test]
+    fn test_is_allowed_contact() {
+        let channel = IMessageChannel::new(
+            Duration::from_secs(3),
+            "/d".to_string(),
+            vec!["+1-555-123-4567".to_string(), "user@test.com".to_string()],
+            None,
+        );
+
+        assert!(channel.is_allowed_contact("+15551234567"));
+        assert!(channel.is_allowed_contact("User@Test.com"));
+        assert!(!channel.is_allowed_contact("unknown@other.com"));
+    }
+
+    #[test]
+    fn test_is_allowed_empty_list() {
+        let channel = IMessageChannel::new(
+            Duration::from_secs(3),
+            "/d".to_string(),
+            vec![],
+            None,
+        );
+        assert!(!channel.is_allowed_contact("anyone"));
+    }
+
+    #[test]
+    fn test_escape_applescript() {
+        assert_eq!(
+            IMessageChannel::escape_applescript("Hello \"world\""),
+            "Hello \\\"world\\\""
+        );
+        assert_eq!(
+            IMessageChannel::escape_applescript("line1\nline2"),
+            "line1\\nline2"
+        );
+    }
+
+    #[test]
+    fn test_channel_type() {
+        let channel = IMessageChannel::new(
+            Duration::from_secs(3),
+            "/d".to_string(),
+            vec![],
+            None,
+        );
+        assert!(matches!(channel.channel_type(), ChannelType::IMessage));
+    }
+}

@@ -267,3 +267,98 @@ impl ToolHandler for BrowseUrlTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_run_command_schema() {
+        let tool = RunCommandTool;
+        assert_eq!(tool.name(), "run_command");
+        assert!(!tool.description().is_empty());
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_read_file_schema() {
+        let tool = ReadFileTool;
+        assert_eq!(tool.name(), "read_file");
+    }
+
+    #[test]
+    fn test_write_file_schema() {
+        let tool = WriteFileTool;
+        assert_eq!(tool.name(), "write_file");
+    }
+
+    #[test]
+    fn test_browse_url_schema() {
+        let tool = BrowseUrlTool;
+        assert_eq!(tool.name(), "browse_url");
+    }
+
+    #[tokio::test]
+    async fn test_run_command_echo() {
+        let tool = RunCommandTool;
+        let result = tool.execute(serde_json::json!({
+            "command": "echo hello_meepo_test"
+        })).await.unwrap();
+        assert!(result.contains("hello_meepo_test"));
+    }
+
+    #[tokio::test]
+    async fn test_run_command_missing_param() {
+        let tool = RunCommandTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_command_blocks_dangerous() {
+        let tool = RunCommandTool;
+        let result = tool.execute(serde_json::json!({
+            "command": "rm -rf /"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_write_and_read_file() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        let path_str = path.to_str().unwrap();
+
+        let write_tool = WriteFileTool;
+        let result = write_tool.execute(serde_json::json!({
+            "path": path_str,
+            "content": "hello from meepo"
+        })).await.unwrap();
+        assert!(result.contains("Wrote") || result.contains("wrote") || result.contains("bytes"));
+
+        let read_tool = ReadFileTool;
+        let result = read_tool.execute(serde_json::json!({
+            "path": path_str
+        })).await.unwrap();
+        assert_eq!(result.trim(), "hello from meepo");
+    }
+
+    #[tokio::test]
+    async fn test_read_file_missing() {
+        let tool = ReadFileTool;
+        let result = tool.execute(serde_json::json!({
+            "path": "/tmp/nonexistent_meepo_test_file_xyz"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_missing_param() {
+        let tool = ReadFileTool;
+        let result = tool.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+}

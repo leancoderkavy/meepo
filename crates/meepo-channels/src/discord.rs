@@ -231,3 +231,47 @@ impl MessageChannel for DiscordChannel {
         ChannelType::Discord
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discord_creation() {
+        let channel = DiscordChannel::new(
+            "test-token".to_string(),
+            vec!["12345".to_string()],
+        );
+        assert!(matches!(channel.channel_type(), ChannelType::Discord));
+    }
+
+    #[test]
+    fn test_parse_valid_user_ids() {
+        let channel = DiscordChannel::new(
+            "token".to_string(),
+            vec!["123456789".to_string(), "987654321".to_string()],
+        );
+        let ids = channel.parse_user_ids().unwrap();
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_invalid_user_id() {
+        let channel = DiscordChannel::new(
+            "token".to_string(),
+            vec!["not-a-number".to_string()],
+        );
+        let result = channel.parse_user_ids();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_user_ids() {
+        let channel = DiscordChannel::new(
+            "token".to_string(),
+            vec![],
+        );
+        let ids = channel.parse_user_ids().unwrap();
+        assert_eq!(ids.len(), 0);
+    }
+}

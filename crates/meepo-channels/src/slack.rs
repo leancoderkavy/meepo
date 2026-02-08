@@ -326,3 +326,43 @@ impl MessageChannel for SlackChannel {
         ChannelType::Slack
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slack_channel_creation() {
+        let channel = SlackChannel::new(
+            "xoxb-test-token".to_string(),
+            Duration::from_secs(3),
+        );
+        assert!(matches!(channel.channel_type(), ChannelType::Slack));
+    }
+
+    #[tokio::test]
+    async fn test_slack_empty_token() {
+        let channel = SlackChannel::new(
+            String::new(),
+            Duration::from_secs(3),
+        );
+        let (tx, _rx) = mpsc::channel(10);
+        let result = channel.start(tx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_slack_send_no_channels() {
+        let channel = SlackChannel::new(
+            "xoxb-test".to_string(),
+            Duration::from_secs(3),
+        );
+        let msg = OutgoingMessage {
+            content: "test".to_string(),
+            channel: ChannelType::Slack,
+            reply_to: None,
+        };
+        let result = channel.send(msg).await;
+        assert!(result.is_err()); // No channels mapped yet
+    }
+}

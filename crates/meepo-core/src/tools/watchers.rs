@@ -214,3 +214,67 @@ impl ToolHandler for CancelWatcherTool {
         Ok(format!("Canceled watcher: {}", watcher_id))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolHandler;
+    use tempfile::TempDir;
+
+    fn setup() -> (Arc<meepo_knowledge::KnowledgeDb>, mpsc::Sender<WatcherCommand>, mpsc::Receiver<WatcherCommand>, TempDir) {
+        let temp = TempDir::new().unwrap();
+        let db = Arc::new(meepo_knowledge::KnowledgeDb::new(&temp.path().join("test.db")).unwrap());
+        let (tx, rx) = mpsc::channel(100);
+        (db, tx, rx, temp)
+    }
+
+    #[test]
+    fn test_create_watcher_schema() {
+        let (db, tx, _rx, _temp) = setup();
+        let tool = CreateWatcherTool::new(db, tx);
+        assert_eq!(tool.name(), "create_watcher");
+        assert!(!tool.description().is_empty());
+        let schema = tool.input_schema();
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_list_watchers_schema() {
+        let (db, _tx, _rx, _temp) = setup();
+        let tool = ListWatchersTool::new(db);
+        assert_eq!(tool.name(), "list_watchers");
+    }
+
+    #[test]
+    fn test_cancel_watcher_schema() {
+        let (db, tx, _rx, _temp) = setup();
+        let tool = CancelWatcherTool::new(db, tx);
+        assert_eq!(tool.name(), "cancel_watcher");
+    }
+
+    #[tokio::test]
+    async fn test_list_watchers_empty() {
+        let (db, _tx, _rx, _temp) = setup();
+        let tool = ListWatchersTool::new(db);
+        let result = tool.execute(serde_json::json!({})).await.unwrap();
+        assert!(result.contains("No") || result.contains("no") || result.contains("0") || result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_and_list_watcher() {
+        let (db, tx, _rx, _temp) = setup();
+        let create = CreateWatcherTool::new(db.clone(), tx);
+        let list = ListWatchersTool::new(db);
+
+        let result = create.execute(serde_json::json!({
+            "kind": "scheduled",
+            "config": {"cron_expr": "0 * * * *", "task": "test task"},
+            "action": "Run a test",
+            "reply_channel": "internal"
+        })).await.unwrap();
+        assert!(result.contains("Created") || result.contains("created") || result.contains("watcher"));
+
+        let result = list.execute(serde_json::json!({})).await.unwrap();
+        assert!(result.contains("test") || result.contains("Run"));
+    }
+}

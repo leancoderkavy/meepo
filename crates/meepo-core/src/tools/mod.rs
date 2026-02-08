@@ -66,6 +66,18 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    /// Get tool definitions for only the named tools
+    pub fn filter_tools(&self, names: &[String]) -> Vec<ToolDefinition> {
+        names.iter()
+            .filter_map(|name| self.tools.get(name))
+            .map(|handler| ToolDefinition {
+                name: handler.name().to_string(),
+                description: handler.description().to_string(),
+                input_schema: handler.input_schema(),
+            })
+            .collect()
+    }
 }
 
 impl Default for ToolRegistry {
@@ -164,5 +176,18 @@ mod tests {
         let registry = ToolRegistry::new();
         let result = registry.execute("nonexistent", serde_json::json!({})).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_filter_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(DummyTool));
+
+        let filtered = registry.filter_tools(&["dummy".to_string()]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "dummy");
+
+        let filtered_empty = registry.filter_tools(&["nonexistent".to_string()]);
+        assert!(filtered_empty.is_empty());
     }
 }

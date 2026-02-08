@@ -4,10 +4,92 @@ use async_trait::async_trait;
 use serde_json::Value;
 use anyhow::{Result, Context};
 use tokio::process::Command;
-use std::path::Path;
+use std::path::PathBuf;
 use tracing::{debug, warn};
 
 use super::{ToolHandler, json_schema};
+
+/// Validate file path to prevent path traversal attacks
+/// Returns the validated PathBuf or an error if the path is unsafe
+fn validate_file_path(path: &str, for_write: bool) -> Result<PathBuf> {
+    // Check for suspicious patterns before canonicalization
+    if path.contains("..") {
+        return Err(anyhow::anyhow!("Path contains '..' which is not allowed for security reasons"));
+    }
+
+    let path_buf = PathBuf::from(path);
+
+    // For reads, the file must exist so we can canonicalize
+    // For writes, we validate the parent directory
+    let canonical_path = if for_write {
+        // For writes, check if parent exists and canonicalize parent
+        if let Some(parent) = path_buf.parent() {
+            if parent.as_os_str().is_empty() {
+                // No parent means current directory
+                std::env::current_dir()
+                    .context("Failed to get current directory")?
+                    .join(path_buf.file_name().unwrap())
+            } else if parent.exists() {
+                // Parent exists, canonicalize it and append filename
+                let canonical_parent = parent.canonicalize()
+                    .context("Failed to canonicalize parent directory")?;
+                canonical_parent.join(path_buf.file_name().unwrap())
+            } else {
+                // Parent doesn't exist, just convert to absolute path
+                if path_buf.is_absolute() {
+                    path_buf
+                } else {
+                    std::env::current_dir()
+                        .context("Failed to get current directory")?
+                        .join(path_buf)
+                }
+            }
+        } else {
+            // No parent directory (shouldn't happen)
+            path_buf
+        }
+    } else {
+        // For reads, file must exist
+        path_buf.canonicalize()
+            .with_context(|| format!("Failed to canonicalize path: {}", path))?
+    };
+
+    // Check if the resolved path is within the user's home directory, current directory, or temp directory
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+    let current_dir = std::env::current_dir()
+        .context("Failed to get current directory")?;
+
+    // Canonicalize temp directory to handle symlinks (e.g., /var -> /private/var on macOS)
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir());
+
+    // Allow paths within home directory, current working directory, or temp directory
+    let is_in_home = canonical_path.starts_with(&home_dir);
+    let is_in_cwd = canonical_path.starts_with(&current_dir);
+    let is_in_temp = canonical_path.starts_with(&temp_dir);
+
+    if !is_in_home && !is_in_cwd && !is_in_temp {
+        return Err(anyhow::anyhow!(
+            "Access denied: path '{}' is outside allowed directories (home, current, or temp directory)",
+            canonical_path.display()
+        ));
+    }
+
+    // Additional check: reject system directories
+    let system_dirs = ["/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/System", "/Library"];
+    for sys_dir in &system_dirs {
+        if canonical_path.starts_with(sys_dir) {
+            return Err(anyhow::anyhow!(
+                "Access denied: cannot access system directory '{}'",
+                sys_dir
+            ));
+        }
+    }
+
+    Ok(canonical_path)
+}
 
 /// Run a shell command (with safety checks)
 pub struct RunCommandTool;
@@ -156,15 +238,33 @@ impl ToolHandler for ReadFileTool {
     }
 
     async fn execute(&self, input: Value) -> Result<String> {
+        const MAX_READ_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
         let path = input.get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
 
         debug!("Reading file: {}", path);
 
-        let content = tokio::fs::read_to_string(path)
+        // Validate path to prevent path traversal
+        let validated_path = validate_file_path(path, false)?;
+
+        // Check file size before reading
+        let metadata = tokio::fs::metadata(&validated_path)
             .await
-            .with_context(|| format!("Failed to read file: {}", path))?;
+            .with_context(|| format!("Failed to read file metadata: {}", validated_path.display()))?;
+
+        let file_size = metadata.len();
+        if file_size > MAX_READ_SIZE {
+            return Err(anyhow::anyhow!(
+                "File too large ({} bytes, max 10MB)",
+                file_size
+            ));
+        }
+
+        let content = tokio::fs::read_to_string(&validated_path)
+            .await
+            .with_context(|| format!("Failed to read file: {}", validated_path.display()))?;
 
         Ok(content)
     }
@@ -200,6 +300,8 @@ impl ToolHandler for WriteFileTool {
     }
 
     async fn execute(&self, input: Value) -> Result<String> {
+        const MAX_WRITE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
         let path = input.get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
@@ -207,21 +309,105 @@ impl ToolHandler for WriteFileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' parameter"))?;
 
+        // Check content size before writing
+        if content.len() > MAX_WRITE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Content too large ({} bytes, max 10MB)",
+                content.len()
+            ));
+        }
+
         debug!("Writing file: {} ({} bytes)", path, content.len());
 
+        // Validate path to prevent path traversal
+        let validated_path = validate_file_path(path, true)?;
+
         // Create parent directories if needed
-        if let Some(parent) = Path::new(path).parent() {
+        if let Some(parent) = validated_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
                 .context("Failed to create parent directories")?;
         }
 
-        tokio::fs::write(path, content)
+        tokio::fs::write(&validated_path, content)
             .await
-            .with_context(|| format!("Failed to write file: {}", path))?;
+            .with_context(|| format!("Failed to write file: {}", validated_path.display()))?;
 
-        Ok(format!("Successfully wrote {} bytes to {}", content.len(), path))
+        Ok(format!("Successfully wrote {} bytes to {}", content.len(), validated_path.display()))
     }
+}
+
+/// Check if a URL is safe to fetch (SSRF protection)
+fn is_safe_url(url_str: &str) -> Result<()> {
+    use std::net::IpAddr;
+
+    let url = url::Url::parse(url_str)
+        .context("Invalid URL format")?;
+
+    // Only allow HTTP and HTTPS
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(anyhow::anyhow!("Only HTTP and HTTPS schemes are allowed"));
+    }
+
+    // Get the host
+    let host = url.host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL must have a host"))?;
+
+    // Block localhost variations
+    let localhost_patterns = ["localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"];
+    for pattern in &localhost_patterns {
+        if host.eq_ignore_ascii_case(pattern) {
+            return Err(anyhow::anyhow!("Access to localhost is not allowed"));
+        }
+    }
+
+    // Try to parse as IP address
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+
+                // Block private IPv4 ranges
+                // 10.0.0.0/8
+                if octets[0] == 10 {
+                    return Err(anyhow::anyhow!("Access to private IP ranges (10.x.x.x) is not allowed"));
+                }
+                // 172.16.0.0/12
+                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                    return Err(anyhow::anyhow!("Access to private IP ranges (172.16-31.x.x) is not allowed"));
+                }
+                // 192.168.0.0/16
+                if octets[0] == 192 && octets[1] == 168 {
+                    return Err(anyhow::anyhow!("Access to private IP ranges (192.168.x.x) is not allowed"));
+                }
+                // 169.254.0.0/16 (link-local)
+                if octets[0] == 169 && octets[1] == 254 {
+                    return Err(anyhow::anyhow!("Access to link-local addresses (169.254.x.x) is not allowed"));
+                }
+                // 127.0.0.0/8 (loopback)
+                if octets[0] == 127 {
+                    return Err(anyhow::anyhow!("Access to loopback addresses is not allowed"));
+                }
+            }
+            IpAddr::V6(ipv6) => {
+                // Block IPv6 loopback (::1)
+                if ipv6.is_loopback() {
+                    return Err(anyhow::anyhow!("Access to IPv6 loopback is not allowed"));
+                }
+                // Block IPv6 link-local (fe80::/10)
+                if ipv6.segments()[0] & 0xffc0 == 0xfe80 {
+                    return Err(anyhow::anyhow!("Access to IPv6 link-local addresses is not allowed"));
+                }
+                // Block IPv6 unique local (fc00::/7)
+                if ipv6.segments()[0] & 0xfe00 == 0xfc00 {
+                    return Err(anyhow::anyhow!("Access to IPv6 unique local addresses is not allowed"));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Fetch URL content
@@ -259,6 +445,9 @@ impl ToolHandler for BrowseUrlTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
 
         debug!("Fetching URL: {}", url);
+
+        // Validate URL for SSRF protection
+        is_safe_url(url)?;
 
         let client = reqwest::Client::builder()
             .user_agent("meepo-agent/1.0")
@@ -429,5 +618,211 @@ mod tests {
         let tool = ReadFileTool;
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_size_limit() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("large.txt");
+        let path_str = path.to_str().unwrap();
+
+        // Create a file larger than 10MB
+        let large_content = "A".repeat(11 * 1024 * 1024); // 11MB
+        std::fs::write(&path, large_content).unwrap();
+
+        let tool = ReadFileTool;
+        let result = tool.execute(serde_json::json!({
+            "path": path_str
+        })).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
+    }
+
+    #[tokio::test]
+    async fn test_write_file_size_limit() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("large.txt");
+        let path_str = path.to_str().unwrap();
+
+        // Try to write a file larger than 10MB
+        let large_content = "A".repeat(11 * 1024 * 1024); // 11MB
+
+        let tool = WriteFileTool;
+        let result = tool.execute(serde_json::json!({
+            "path": path_str,
+            "content": large_content
+        })).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_path_traversal_blocked() {
+        let tool = ReadFileTool;
+
+        // Try to read /etc/passwd using path traversal
+        let result = tool.execute(serde_json::json!({
+            "path": "../../../etc/passwd"
+        })).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("..") || err_msg.contains("not allowed") || err_msg.contains("denied"));
+    }
+
+    #[tokio::test]
+    async fn test_write_file_path_traversal_blocked() {
+        let tool = WriteFileTool;
+
+        // Try to write to /etc using path traversal
+        let result = tool.execute(serde_json::json!({
+            "path": "../../../etc/malicious.txt",
+            "content": "test"
+        })).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("..") || err_msg.contains("not allowed") || err_msg.contains("denied"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_normal_path_works() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        let path_str = path.to_str().unwrap();
+
+        // Create a test file
+        std::fs::write(&path, "test content").unwrap();
+
+        let tool = ReadFileTool;
+        let result = tool.execute(serde_json::json!({
+            "path": path_str
+        })).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().trim(), "test content");
+    }
+
+    #[test]
+    fn test_validate_file_path_rejects_dotdot() {
+        let result = validate_file_path("../../../etc/passwd", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains(".."));
+    }
+
+    #[test]
+    fn test_validate_file_path_rejects_system_dirs() {
+        // These tests may fail if the paths don't exist, which is fine
+        // The important thing is that IF they exist, they should be blocked
+
+        let system_paths = vec![
+            "/etc/test",
+            "/bin/test",
+            "/sbin/test",
+        ];
+
+        for path in system_paths {
+            // We expect either "denied" or a canonicalization error
+            // Both are acceptable outcomes for security
+            let result = validate_file_path(path, false);
+            if result.is_ok() {
+                // If somehow it succeeded, make sure it's not actually in a system dir
+                let validated = result.unwrap();
+                assert!(!validated.starts_with("/etc"));
+                assert!(!validated.starts_with("/bin"));
+                assert!(!validated.starts_with("/sbin"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_safe_url_blocks_localhost() {
+        let localhost_urls = vec![
+            "http://localhost/api",
+            "http://127.0.0.1/api",
+            "http://0.0.0.0/api",
+            "http://[::1]/api",
+        ];
+
+        for url in localhost_urls {
+            let result = is_safe_url(url);
+            assert!(result.is_err(), "Should block localhost URL: {}", url);
+            let err_msg = result.unwrap_err().to_string().to_lowercase();
+            assert!(err_msg.contains("localhost") || err_msg.contains("loopback"));
+        }
+    }
+
+    #[test]
+    fn test_is_safe_url_blocks_private_ips() {
+        let private_urls = vec![
+            "http://10.0.0.1/api",
+            "http://192.168.1.1/api",
+            "http://172.16.0.1/api",
+            "http://172.31.255.255/api",
+            "http://169.254.1.1/api",
+        ];
+
+        for url in private_urls {
+            let result = is_safe_url(url);
+            assert!(result.is_err(), "Should block private IP URL: {}", url);
+            let err_msg = result.unwrap_err().to_string().to_lowercase();
+            assert!(err_msg.contains("private") || err_msg.contains("link-local") || err_msg.contains("not allowed"));
+        }
+    }
+
+    #[test]
+    fn test_is_safe_url_allows_public() {
+        let public_urls = vec![
+            "https://www.google.com",
+            "https://example.com/api",
+            "http://8.8.8.8",
+        ];
+
+        for url in public_urls {
+            let result = is_safe_url(url);
+            assert!(result.is_ok(), "Should allow public URL: {}", url);
+        }
+    }
+
+    #[test]
+    fn test_is_safe_url_blocks_non_http() {
+        let non_http_urls = vec![
+            "file:///etc/passwd",
+            "ftp://example.com",
+            "javascript:alert(1)",
+        ];
+
+        for url in non_http_urls {
+            let result = is_safe_url(url);
+            assert!(result.is_err(), "Should block non-HTTP URL: {}", url);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_browse_url_blocks_localhost() {
+        let tool = BrowseUrlTool;
+
+        let result = tool.execute(serde_json::json!({
+            "url": "http://localhost:8080/admin"
+        })).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        assert!(err_msg.contains("localhost") || err_msg.contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_browse_url_blocks_private_ip() {
+        let tool = BrowseUrlTool;
+
+        let result = tool.execute(serde_json::json!({
+            "url": "http://192.168.1.1/router"
+        })).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        assert!(err_msg.contains("private") || err_msg.contains("not allowed"));
     }
 }

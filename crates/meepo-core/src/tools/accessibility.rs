@@ -7,6 +7,7 @@ use tokio::process::Command;
 use tracing::{debug, warn};
 
 use super::{ToolHandler, json_schema};
+use super::macos::sanitize_applescript_string;
 
 /// Read screen information (focused app and window)
 pub struct ReadScreenTool;
@@ -102,6 +103,9 @@ impl ToolHandler for ClickElementTool {
 
         debug!("Clicking {} element: {}", element_type, element_name);
 
+        // Sanitize input to prevent AppleScript injection
+        let safe_element_name = sanitize_applescript_string(element_name);
+
         let script = format!(r#"
 tell application "System Events"
     try
@@ -114,7 +118,7 @@ tell application "System Events"
         return "Error: " & errMsg
     end try
 end tell
-"#, element_type, element_name.replace('"', "\\\""));
+"#, element_type, safe_element_name);
 
         let output = Command::new("osascript")
             .arg("-e")
@@ -166,6 +170,9 @@ impl ToolHandler for TypeTextTool {
 
         debug!("Typing text ({} chars)", text.len());
 
+        // Sanitize input to prevent AppleScript injection
+        let safe_text = sanitize_applescript_string(text);
+
         let script = format!(r#"
 tell application "System Events"
     try
@@ -175,7 +182,7 @@ tell application "System Events"
         return "Error: " & errMsg
     end try
 end tell
-"#, text.replace('"', "\\\"").replace('\n', "\" & return & \""));
+"#, safe_text.replace('\n', "\" & return & \""));
 
         let output = Command::new("osascript")
             .arg("-e")
@@ -235,5 +242,22 @@ mod tests {
         let tool = TypeTextTool;
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_accessibility_uses_sanitization() {
+        // Verify that sanitize_applescript_string handles special characters
+        let malicious_input = "test\"; do shell script \"rm -rf /\" --\"";
+        let sanitized = sanitize_applescript_string(malicious_input);
+
+        // Should have escaped quotes and removed/replaced problematic characters
+        assert!(sanitized.contains("\\\""));
+        assert!(!sanitized.contains('\n'));
+
+        // Test that newlines are replaced with spaces
+        let with_newlines = "line1\nline2\rline3";
+        let sanitized = sanitize_applescript_string(with_newlines);
+        assert!(!sanitized.contains('\n'));
+        assert!(!sanitized.contains('\r'));
     }
 }

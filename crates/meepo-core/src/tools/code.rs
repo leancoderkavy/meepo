@@ -194,6 +194,144 @@ impl ToolHandler for MakePrTool {
 /// Review a pull request
 pub struct ReviewPrTool;
 
+impl ReviewPrTool {
+    /// Analyze a git diff and extract structured information
+    fn analyze_diff(diff: &str) -> Result<DiffAnalysis> {
+        let mut files_changed = 0;
+        let mut lines_added = 0;
+        let mut lines_removed = 0;
+        let mut file_list = Vec::new();
+        let mut issues = Vec::new();
+        let mut current_file = String::new();
+
+        for line in diff.lines() {
+            if line.starts_with("diff --git") {
+                // Extract filename from diff header
+                if let Some(file) = line.split_whitespace().nth(2) {
+                    current_file = file.trim_start_matches("a/").to_string();
+                    files_changed += 1;
+                    file_list.push(current_file.clone());
+                }
+            } else if line.starts_with('+') && !line.starts_with("+++") {
+                lines_added += 1;
+
+                // Flag potential issues in added lines
+                if line.contains("TODO") || line.contains("FIXME") {
+                    issues.push(format!("TODO/FIXME added in {}: {}", current_file, line.trim()));
+                }
+                if line.contains("console.log") || line.contains("println!") && line.contains("debug") {
+                    issues.push(format!("Debug statement in {}: {}", current_file, line.trim()));
+                }
+                if line.contains("unwrap()") && !line.contains("test") {
+                    issues.push(format!("Potential panic with unwrap() in {}: {}", current_file, line.trim()));
+                }
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                lines_removed += 1;
+            }
+        }
+
+        // Check for large file changes
+        if files_changed > 20 {
+            issues.push(format!("Large PR: {} files changed (consider splitting)", files_changed));
+        }
+
+        // Build file list string
+        let file_list_str = if file_list.is_empty() {
+            "No files detected".to_string()
+        } else {
+            file_list.iter()
+                .take(20)
+                .map(|f| format!("  - {}", f))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        // Build detailed analysis
+        let mut analysis_parts = Vec::new();
+
+        if lines_added > 500 {
+            analysis_parts.push(format!("Large changeset: {} lines added", lines_added));
+        }
+
+        if lines_removed > lines_added * 2 {
+            analysis_parts.push("Significant code deletion detected (potential refactoring)".to_string());
+        }
+
+        // Check file types
+        let mut has_tests = false;
+        let mut has_docs = false;
+        let mut config_changes = false;
+
+        for file in &file_list {
+            if file.contains("test") || file.ends_with("_test.rs") || file.ends_with(".test.js") {
+                has_tests = true;
+            }
+            if file.ends_with(".md") || file.contains("doc") {
+                has_docs = true;
+            }
+            if file.ends_with(".json") || file.ends_with(".yaml") || file.ends_with(".yml")
+                || file.ends_with(".toml") || file.ends_with(".config") {
+                config_changes = true;
+            }
+        }
+
+        if !has_tests && lines_added > 100 {
+            analysis_parts.push("No test files detected in large changeset".to_string());
+        }
+
+        if config_changes {
+            analysis_parts.push("Configuration files modified - ensure backward compatibility".to_string());
+        }
+
+        let detailed_analysis = if analysis_parts.is_empty() && issues.is_empty() {
+            "No major issues detected. Changes appear straightforward.".to_string()
+        } else {
+            let mut parts = analysis_parts;
+            if !issues.is_empty() {
+                parts.push(format!("\nPotential Issues:\n{}",
+                    issues.iter()
+                        .map(|i| format!("  - {}", i))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
+            }
+            parts.join("\n")
+        };
+
+        // Build recommendations
+        let mut recommendations = Vec::new();
+
+        if !has_tests && lines_added > 50 {
+            recommendations.push("Consider adding tests for new functionality");
+        }
+
+        if !has_docs && lines_added > 200 {
+            recommendations.push("Consider updating documentation");
+        }
+
+        if files_changed > 15 {
+            recommendations.push("Large PR - consider breaking into smaller, focused PRs");
+        }
+
+        recommendations.push("Verify all CI/CD checks pass");
+        recommendations.push("Ensure code follows project style guidelines");
+
+        let recommendations_str = recommendations.iter()
+            .map(|r| format!("- {}", r))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(DiffAnalysis {
+            files_changed,
+            lines_added,
+            lines_removed,
+            file_list: file_list_str,
+            detailed_analysis,
+            recommendations: recommendations_str,
+        })
+    }
+}
+
 #[async_trait]
 impl ToolHandler for ReviewPrTool {
     fn name(&self) -> &str {
@@ -258,19 +396,42 @@ impl ToolHandler for ReviewPrTool {
             return Err(anyhow::anyhow!("Failed to fetch PR diff"));
         };
 
-        // Combine information for review
+        // Parse the diff for structured analysis
+        let analysis = Self::analyze_diff(&diff_content)?;
+
+        // Build comprehensive review
         let review = format!(
-            "Pull Request Review\n\n## PR Details\n{}\n\n## Changes\n```diff\n{}\n```\n\n\
-            Analysis: This PR contains the above changes. Key points to review:\n\
-            - Code quality and style\n\
-            - Potential bugs or issues\n\
-            - Test coverage\n\
-            - Documentation updates",
-            pr_details, diff_content
+            "Pull Request Review for PR #{}\n\n\
+            ## PR Details\n{}\n\n\
+            ## Change Summary\n\
+            - Files changed: {}\n\
+            - Lines added: {}\n\
+            - Lines removed: {}\n\n\
+            ## Files Modified\n{}\n\n\
+            ## Analysis\n{}\n\n\
+            ## Recommendations\n{}",
+            pr_number,
+            pr_details,
+            analysis.files_changed,
+            analysis.lines_added,
+            analysis.lines_removed,
+            analysis.file_list,
+            analysis.detailed_analysis,
+            analysis.recommendations
         );
 
         Ok(review)
     }
+}
+
+/// Analysis result from parsing a git diff
+struct DiffAnalysis {
+    files_changed: usize,
+    lines_added: usize,
+    lines_removed: usize,
+    file_list: String,
+    detailed_analysis: String,
+    recommendations: String,
 }
 
 #[cfg(test)]
@@ -325,5 +486,71 @@ mod tests {
         let tool = ReviewPrTool;
         let result = tool.execute(serde_json::json!({})).await;
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("pr_number"));
+    }
+
+    #[test]
+    fn test_review_pr_schema_validation() {
+        let tool = ReviewPrTool;
+        assert_eq!(tool.name(), "review_pr");
+
+        let schema = tool.input_schema();
+        let required: Vec<String> = serde_json::from_value(
+            schema.get("required").cloned().unwrap_or(serde_json::json!([]))
+        ).unwrap_or_default();
+
+        assert!(required.contains(&"pr_number".to_string()));
+
+        let properties = schema.get("properties").unwrap();
+        assert!(properties.get("pr_number").is_some());
+        assert!(properties.get("repo").is_some());
+    }
+
+    #[test]
+    fn test_diff_analysis_basic() {
+        let diff = r#"
+diff --git a/src/main.rs b/src/main.rs
+index abc123..def456 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,5 +1,7 @@
+ fn main() {
++    // Added new feature
++    println!("Hello, world!");
+-    old_code();
+ }
+"#;
+
+        let analysis = ReviewPrTool::analyze_diff(diff).unwrap();
+        assert_eq!(analysis.files_changed, 1);
+        assert!(analysis.lines_added >= 2);
+        assert!(analysis.lines_removed >= 1);
+        assert!(analysis.file_list.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_diff_analysis_detects_issues() {
+        let diff = r#"
+diff --git a/src/lib.rs b/src/lib.rs
+index abc123..def456 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,5 @@
+ pub fn process() {
++    // TODO: implement this properly
++    let value = dangerous_call().unwrap();
+ }
+"#;
+
+        let analysis = ReviewPrTool::analyze_diff(diff).unwrap();
+        assert!(analysis.detailed_analysis.contains("TODO") || analysis.detailed_analysis.contains("unwrap"));
+    }
+
+    #[test]
+    fn test_diff_analysis_empty() {
+        let analysis = ReviewPrTool::analyze_diff("").unwrap();
+        assert_eq!(analysis.files_changed, 0);
+        assert_eq!(analysis.lines_added, 0);
+        assert_eq!(analysis.lines_removed, 0);
     }
 }

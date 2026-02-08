@@ -120,7 +120,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
 
     let cancel = CancellationToken::new();
 
-    // Initialize knowledge database
+    // Initialize knowledge database and graph
     let db_path = shellexpand(&cfg.knowledge.db_path);
     let tantivy_path = shellexpand(&cfg.knowledge.tantivy_path);
     if let Some(parent) = db_path.parent() {
@@ -128,11 +128,18 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     }
     std::fs::create_dir_all(&tantivy_path)?;
 
+    // Create KnowledgeGraph which includes both DB and Tantivy index
+    let knowledge_graph = Arc::new(
+        meepo_knowledge::KnowledgeGraph::new(&db_path, &tantivy_path)
+            .context("Failed to initialize knowledge graph")?,
+    );
+
+    // Also keep a reference to just the DB for backward compatibility
     let db = Arc::new(
         meepo_knowledge::KnowledgeDb::new(&db_path)
             .context("Failed to initialize knowledge database")?,
     );
-    info!("Knowledge database initialized");
+    info!("Knowledge database and Tantivy index initialized");
 
     // Load SOUL and MEMORY
     let workspace = shellexpand(&cfg.memory.workspace);
@@ -166,7 +173,8 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::code::ReviewPrTool));
     registry.register(Arc::new(meepo_core::tools::memory::RememberTool::new(db.clone())));
     registry.register(Arc::new(meepo_core::tools::memory::RecallTool::new(db.clone())));
-    registry.register(Arc::new(meepo_core::tools::memory::SearchKnowledgeTool::new(db.clone())));
+    // Use KnowledgeGraph for SearchKnowledgeTool to enable Tantivy full-text search
+    registry.register(Arc::new(meepo_core::tools::memory::SearchKnowledgeTool::with_graph(knowledge_graph.clone())));
     registry.register(Arc::new(meepo_core::tools::memory::LinkEntitiesTool::new(db.clone())));
     registry.register(Arc::new(meepo_core::tools::system::RunCommandTool));
     registry.register(Arc::new(meepo_core::tools::system::ReadFileTool));

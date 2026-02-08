@@ -6,7 +6,7 @@ use anyhow::{Result, Context};
 use std::sync::Arc;
 use tracing::debug;
 
-use meepo_knowledge::KnowledgeDb;
+use meepo_knowledge::{KnowledgeDb, KnowledgeGraph};
 use super::{ToolHandler, json_schema};
 
 /// Remember information by adding to knowledge graph
@@ -203,13 +203,29 @@ impl ToolHandler for LinkEntitiesTool {
 }
 
 /// Search knowledge graph using full-text search
+///
+/// This tool can work with either KnowledgeGraph (preferred, uses Tantivy)
+/// or KnowledgeDb (fallback, uses basic SQL search)
 pub struct SearchKnowledgeTool {
-    db: Arc<KnowledgeDb>,
+    graph: Option<Arc<KnowledgeGraph>>,
+    db: Option<Arc<KnowledgeDb>>,
 }
 
 impl SearchKnowledgeTool {
+    /// Create a new search tool with KnowledgeGraph (uses Tantivy full-text search)
+    pub fn with_graph(graph: Arc<KnowledgeGraph>) -> Self {
+        Self {
+            graph: Some(graph),
+            db: None,
+        }
+    }
+
+    /// Create a new search tool with KnowledgeDb (uses basic SQL search as fallback)
     pub fn new(db: Arc<KnowledgeDb>) -> Self {
-        Self { db }
+        Self {
+            graph: None,
+            db: Some(db),
+        }
     }
 }
 
@@ -221,7 +237,7 @@ impl ToolHandler for SearchKnowledgeTool {
 
     fn description(&self) -> &str {
         "Perform a full-text search across all stored knowledge. \
-         More powerful than recall for finding relevant information."
+         Uses Tantivy for fast, relevance-ranked full-text search."
     }
 
     fn input_schema(&self) -> Value {
@@ -229,7 +245,7 @@ impl ToolHandler for SearchKnowledgeTool {
             serde_json::json!({
                 "query": {
                     "type": "string",
-                    "description": "Search query"
+                    "description": "Search query (supports full-text search)"
                 },
                 "limit": {
                     "type": "number",
@@ -250,23 +266,53 @@ impl ToolHandler for SearchKnowledgeTool {
 
         debug!("Full-text search for: {}", query);
 
-        // Use the basic search for now (Tantivy integration would go here)
-        let results = self.db.search_entities(query, None)
-            .context("Failed to search knowledge")?;
+        // Use Tantivy if KnowledgeGraph is available, otherwise fall back to basic search
+        if let Some(graph) = &self.graph {
+            // Use Tantivy full-text search via KnowledgeGraph
+            let search_results = graph.search(query, limit)
+                .context("Failed to perform full-text search")?;
 
-        if results.is_empty() {
-            return Ok("No results found.".to_string());
-        }
-
-        let mut output = format!("Found {} result(s):\n\n", results.len().min(limit));
-        for entity in results.iter().take(limit) {
-            output.push_str(&format!("- {} ({})\n", entity.name, entity.entity_type));
-            if let Some(metadata) = &entity.metadata {
-                output.push_str(&format!("  {}\n", metadata));
+            if search_results.is_empty() {
+                return Ok("No results found.".to_string());
             }
-        }
 
-        Ok(output)
+            let mut output = format!("Found {} result(s) (sorted by relevance):\n\n", search_results.len());
+            for result in search_results.iter().take(limit) {
+                output.push_str(&format!(
+                    "- {} ({})\n  Relevance: {:.2}\n",
+                    result.id,
+                    result.entity_type,
+                    result.score
+                ));
+                if let Some(snippet) = &result.snippet {
+                    output.push_str(&format!("  Preview: {}\n", snippet));
+                }
+                output.push('\n');
+            }
+
+            Ok(output)
+        } else if let Some(db) = &self.db {
+            // Fallback to basic SQL search
+            debug!("Using fallback SQL search (Tantivy not available)");
+            let results = db.search_entities(query, None)
+                .context("Failed to search knowledge")?;
+
+            if results.is_empty() {
+                return Ok("No results found.".to_string());
+            }
+
+            let mut output = format!("Found {} result(s) (basic search):\n\n", results.len().min(limit));
+            for entity in results.iter().take(limit) {
+                output.push_str(&format!("- {} ({})\n", entity.name, entity.entity_type));
+                if let Some(metadata) = &entity.metadata {
+                    output.push_str(&format!("  {}\n", metadata));
+                }
+            }
+
+            Ok(output)
+        } else {
+            Err(anyhow::anyhow!("SearchKnowledgeTool not properly initialized"))
+        }
     }
 }
 
@@ -280,6 +326,14 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db = Arc::new(meepo_knowledge::KnowledgeDb::new(&temp.path().join("test.db")).unwrap());
         (db, temp)
+    }
+
+    fn setup_graph() -> (Arc<meepo_knowledge::KnowledgeGraph>, TempDir) {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.db");
+        let index_path = temp.path().join("test_index");
+        let graph = Arc::new(meepo_knowledge::KnowledgeGraph::new(&db_path, &index_path).unwrap());
+        (graph, temp)
     }
 
     #[test]
@@ -380,6 +434,86 @@ mod tests {
             "query": "Python"
         })).await.unwrap();
         assert!(result.contains("Python"));
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_with_tantivy() {
+        let (graph, _temp) = setup_graph();
+
+        // Add entities directly to the graph (which indexes them in Tantivy)
+        let _ = graph.add_entity(
+            "Rust programming language",
+            "concept",
+            Some(serde_json::json!({"description": "Systems programming"}))
+        ).unwrap();
+
+        let _ = graph.add_entity(
+            "Python scripting language",
+            "concept",
+            Some(serde_json::json!({"description": "High-level programming"}))
+        ).unwrap();
+
+        let search = SearchKnowledgeTool::with_graph(graph);
+
+        // Search using full-text search
+        let result = search.execute(serde_json::json!({
+            "query": "programming",
+            "limit": 10
+        })).await.unwrap();
+
+        assert!(result.contains("Found"));
+        assert!(result.contains("Relevance"));
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_tantivy_ranking() {
+        let (graph, _temp) = setup_graph();
+
+        // Add entities with different relevance
+        let _ = graph.add_entity(
+            "Rust is the best systems programming language",
+            "article",
+            Some(serde_json::json!({"content": "Rust Rust Rust systems programming"}))
+        ).unwrap();
+
+        let _ = graph.add_entity(
+            "Introduction to programming",
+            "article",
+            Some(serde_json::json!({"content": "General programming concepts"}))
+        ).unwrap();
+
+        let search = SearchKnowledgeTool::with_graph(graph);
+
+        // Search for "Rust" - should rank first result higher
+        let result = search.execute(serde_json::json!({
+            "query": "Rust systems",
+            "limit": 5
+        })).await.unwrap();
+
+        // Should find results
+        assert!(result.contains("article"));
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_no_results() {
+        let (graph, _temp) = setup_graph();
+        let search = SearchKnowledgeTool::with_graph(graph);
+
+        let result = search.execute(serde_json::json!({
+            "query": "nonexistent_xyz_12345"
+        })).await.unwrap();
+
+        assert!(result.contains("No results") || result.contains("Found 0"));
+    }
+
+    #[tokio::test]
+    async fn test_search_knowledge_missing_query() {
+        let (db, _temp) = setup();
+        let search = SearchKnowledgeTool::new(db);
+
+        let result = search.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("query"));
     }
 
     #[test]

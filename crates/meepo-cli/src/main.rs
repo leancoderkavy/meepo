@@ -185,10 +185,45 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::watchers::CancelWatcherTool::new(db.clone(), watcher_command_tx.clone())));
     info!("Registered {} tools", registry.len());
 
+    // Initialize progress channel for sub-agent orchestrator
+    let (progress_tx, mut progress_rx) =
+        tokio::sync::mpsc::channel::<meepo_core::types::OutgoingMessage>(100);
+
+    // Build orchestrator
+    let orchestrator_config = meepo_core::orchestrator::OrchestratorConfig {
+        max_concurrent_subtasks: cfg.orchestrator.max_concurrent_subtasks,
+        max_subtasks_per_request: cfg.orchestrator.max_subtasks_per_request,
+        parallel_timeout_secs: cfg.orchestrator.parallel_timeout_secs,
+        background_timeout_secs: cfg.orchestrator.background_timeout_secs,
+        max_background_groups: cfg.orchestrator.max_background_groups,
+    };
+    let orchestrator_api = meepo_core::api::ApiClient::new(
+        shellexpand_str(&cfg.providers.anthropic.api_key),
+        Some(cfg.agent.default_model.clone()),
+    ).with_max_tokens(cfg.agent.max_tokens);
+    let orchestrator = Arc::new(meepo_core::orchestrator::TaskOrchestrator::new(
+        orchestrator_api,
+        progress_tx,
+        orchestrator_config,
+    ));
+
+    // Register delegate_tasks tool with OnceLock for circular dependency
+    let registry_slot = Arc::new(std::sync::OnceLock::new());
+    registry.register(Arc::new(
+        meepo_core::tools::delegate::DelegateTasksTool::new(
+            orchestrator.clone(),
+            registry_slot.clone(),
+        )
+    ));
+    info!("Registered delegate_tasks tool (total: {} tools)", registry.len());
+
     // Initialize agent
+    let registry = Arc::new(registry);
+    assert!(registry_slot.set(registry.clone()).is_ok(), "registry slot already set");
+
     let agent = Arc::new(meepo_core::agent::Agent::new(
         api,
-        Arc::new(registry),
+        registry,
         soul,
         memory,
         db.clone(),
@@ -327,6 +362,19 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                 WatcherCommand::List => {
                                     // List command is handled synchronously by the tool via DB query
                                 }
+                            }
+                        });
+                    }
+                }
+                progress = progress_rx.recv() => {
+                    if let Some(msg) = progress {
+                        info!("Sub-agent progress for {}: {}",
+                            msg.channel,
+                            &msg.content[..msg.content.len().min(100)]);
+                        let sender = bus_sender.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = sender.send(msg).await {
+                                error!("Failed to send progress message: {}", e);
                             }
                         });
                     }

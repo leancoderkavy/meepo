@@ -17,6 +17,7 @@ pub mod watchers;
 pub mod delegate;
 pub mod system;
 pub mod search;
+pub mod filesystem;
 
 /// Trait for executing tools
 #[async_trait]

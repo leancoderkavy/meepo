@@ -150,7 +150,6 @@ async fn cmd_setup() -> Result<()> {
             println!("  Saved to {}", rc_path.display());
         }
     }
-    std::env::set_var("ANTHROPIC_API_KEY", &api_key);
 
     // Step 4: Optional Tavily key
     println!("\n  Tavily API Key (optional — enables web search)");
@@ -171,7 +170,6 @@ async fn cmd_setup() -> Result<()> {
                 writeln!(file, "export TAVILY_API_KEY=\"{}\"", tavily_key)?;
             }
         }
-        std::env::set_var("TAVILY_API_KEY", &tavily_key);
         println!("  Saved.");
     } else {
         println!("  Skipped — web_search tool won't be available.");
@@ -179,11 +177,12 @@ async fn cmd_setup() -> Result<()> {
 
     // Step 5: Verify
     println!("\n  Verifying API connection...");
+    let cfg = MeepoConfig::load(&None)?;
     let api = meepo_core::api::ApiClient::new(
         api_key,
-        Some("claude-sonnet-4-5-20250929".to_string()),
+        Some(cfg.agent.default_model.clone()),
     );
-    match api.chat(
+    let api_ok = match api.chat(
         &[meepo_core::api::ApiMessage {
             role: "user".to_string(),
             content: meepo_core::api::MessageContent::Text("Say 'hello' in one word.".to_string()),
@@ -197,15 +196,21 @@ async fn cmd_setup() -> Result<()> {
                 .collect();
             println!("  Response: {}", text.trim());
             println!("  API connection works!\n");
+            true
         }
         Err(e) => {
             eprintln!("  API test failed: {}", e);
             eprintln!("  Check your API key and try again.\n");
+            false
         }
-    }
+    };
 
     // Summary
-    println!("  Setup complete!");
+    if api_ok {
+        println!("  Setup complete!");
+    } else {
+        println!("  Setup complete (API verification failed — check your key).");
+    }
     println!("  ─────────────");
     println!("  Config:  {}", config_path.display());
     println!("  Soul:    {}", config_dir.join("workspace/SOUL.md").display());

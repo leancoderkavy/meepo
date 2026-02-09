@@ -133,3 +133,14 @@ max_subtasks_per_request = 10
 parallel_timeout_secs = 120
 background_timeout_secs = 600
 max_background_groups = 3
+
+# ── Autonomous Agent ─────────────────────────────────────────────
+# Continuous loop that pursues goals and learns preferences.
+
+[autonomy]
+enabled = true
+tick_interval_secs = 30       # idle tick rate
+max_goals = 50                # prevent runaway goal creation
+preference_decay_days = 30    # confidence decay period
+min_confidence_to_act = 0.5   # below this, ask user first
+max_tokens_per_tick = 4096    # budget per think phase

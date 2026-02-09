@@ -16,6 +16,8 @@ pub struct MeepoConfig {
     pub filesystem: FilesystemConfig,
     #[serde(default = "default_orchestrator_config")]
     pub orchestrator: OrchestratorConfig,
+    #[serde(default = "default_autonomy_config")]
+    pub autonomy: AutonomyConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +244,40 @@ fn default_orchestrator_config() -> OrchestratorConfig {
         parallel_timeout_secs: default_parallel_timeout_secs(),
         background_timeout_secs: default_background_timeout_secs(),
         max_background_groups: default_max_background_groups(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomyConfig {
+    #[serde(default = "default_autonomy_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_tick_interval")]
+    pub tick_interval_secs: u64,
+    #[serde(default = "default_max_goals")]
+    pub max_goals: usize,
+    #[serde(default = "default_preference_decay_days")]
+    pub preference_decay_days: u32,
+    #[serde(default = "default_min_confidence")]
+    pub min_confidence_to_act: f64,
+    #[serde(default = "default_max_tokens_per_tick")]
+    pub max_tokens_per_tick: u32,
+}
+
+fn default_autonomy_enabled() -> bool { true }
+fn default_tick_interval() -> u64 { 30 }
+fn default_max_goals() -> usize { 50 }
+fn default_preference_decay_days() -> u32 { 30 }
+fn default_min_confidence() -> f64 { 0.5 }
+fn default_max_tokens_per_tick() -> u32 { 4096 }
+
+fn default_autonomy_config() -> AutonomyConfig {
+    AutonomyConfig {
+        enabled: default_autonomy_enabled(),
+        tick_interval_secs: default_tick_interval(),
+        max_goals: default_max_goals(),
+        preference_decay_days: default_preference_decay_days(),
+        min_confidence_to_act: default_min_confidence(),
+        max_tokens_per_tick: default_max_tokens_per_tick(),
     }
 }
 

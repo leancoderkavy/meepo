@@ -47,6 +47,9 @@ enum Commands {
     /// Initialize config directory and default config
     Init,
 
+    /// Interactive first-time setup wizard
+    Setup,
+
     /// Show current configuration
     Config,
 }
@@ -67,6 +70,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init => cmd_init().await,
+        Commands::Setup => cmd_setup().await,
         Commands::Config => cmd_config(&cli.config).await,
         Commands::Start => cmd_start(&cli.config).await,
         Commands::Stop => cmd_stop().await,
@@ -109,6 +113,143 @@ async fn cmd_init() -> Result<()> {
     println!("Meepo initialized at {}", config_dir.display());
     println!("Edit {} to configure your API keys and channels.", config_path.display());
     Ok(())
+}
+
+async fn cmd_setup() -> Result<()> {
+    use std::io::{self, Write, BufRead};
+
+    println!("\n  Meepo Setup\n  ───────────\n");
+
+    // Step 1: Init config
+    cmd_init().await?;
+    let config_dir = config::config_dir();
+    let config_path = config_dir.join("config.toml");
+
+    // Step 2: Anthropic API key
+    println!("\n  Anthropic API Key (required)");
+    println!("  Get one at: https://console.anthropic.com/settings/keys\n");
+
+    let api_key = if let Ok(existing) = std::env::var("ANTHROPIC_API_KEY") {
+        if !existing.is_empty() && existing.starts_with("sk-ant-") {
+            println!("  Found ANTHROPIC_API_KEY in environment.");
+            existing
+        } else {
+            prompt_api_key()?
+        }
+    } else {
+        prompt_api_key()?
+    };
+
+    // Step 3: Write API key to shell RC
+    let shell_rc = detect_shell_rc();
+    if let Some(rc_path) = &shell_rc {
+        let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();
+        if !rc_content.contains("ANTHROPIC_API_KEY") {
+            let mut file = std::fs::OpenOptions::new().append(true).open(rc_path)?;
+            writeln!(file, "\nexport ANTHROPIC_API_KEY=\"{}\"", api_key)?;
+            println!("  Saved to {}", rc_path.display());
+        }
+    }
+    std::env::set_var("ANTHROPIC_API_KEY", &api_key);
+
+    // Step 4: Optional Tavily key
+    println!("\n  Tavily API Key (optional — enables web search)");
+    println!("  Get one at: https://app.tavily.com/home");
+    println!("  Press Enter to skip.\n");
+
+    print!("  API key: ");
+    io::stdout().flush()?;
+    let mut tavily_key = String::new();
+    io::stdin().lock().read_line(&mut tavily_key)?;
+    let tavily_key = tavily_key.trim().to_string();
+
+    if !tavily_key.is_empty() {
+        if let Some(rc_path) = &shell_rc {
+            let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();
+            if !rc_content.contains("TAVILY_API_KEY") {
+                let mut file = std::fs::OpenOptions::new().append(true).open(rc_path)?;
+                writeln!(file, "export TAVILY_API_KEY=\"{}\"", tavily_key)?;
+            }
+        }
+        std::env::set_var("TAVILY_API_KEY", &tavily_key);
+        println!("  Saved.");
+    } else {
+        println!("  Skipped — web_search tool won't be available.");
+    }
+
+    // Step 5: Verify
+    println!("\n  Verifying API connection...");
+    let api = meepo_core::api::ApiClient::new(
+        api_key,
+        Some("claude-sonnet-4-5-20250929".to_string()),
+    );
+    match api.chat(
+        &[meepo_core::api::ApiMessage {
+            role: "user".to_string(),
+            content: meepo_core::api::MessageContent::Text("Say 'hello' in one word.".to_string()),
+        }],
+        &[],
+        "You are a helpful assistant.",
+    ).await {
+        Ok(response) => {
+            let text: String = response.content.iter()
+                .filter_map(|b| if let meepo_core::api::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None })
+                .collect();
+            println!("  Response: {}", text.trim());
+            println!("  API connection works!\n");
+        }
+        Err(e) => {
+            eprintln!("  API test failed: {}", e);
+            eprintln!("  Check your API key and try again.\n");
+        }
+    }
+
+    // Summary
+    println!("  Setup complete!");
+    println!("  ─────────────");
+    println!("  Config:  {}", config_path.display());
+    println!("  Soul:    {}", config_dir.join("workspace/SOUL.md").display());
+    println!("  Memory:  {}", config_dir.join("workspace/MEMORY.md").display());
+    println!();
+    println!("  Next steps:");
+    println!("    meepo start          # start the daemon");
+    println!("    meepo ask \"Hello\"    # one-shot question");
+    println!("    nano {}  # enable channels", config_path.display());
+    println!();
+
+    Ok(())
+}
+
+fn prompt_api_key() -> Result<String> {
+    use std::io::{self, Write, BufRead};
+    loop {
+        print!("  API key (sk-ant-...): ");
+        io::stdout().flush()?;
+        let mut key = String::new();
+        io::stdin().lock().read_line(&mut key)?;
+        let key = key.trim().to_string();
+        if key.starts_with("sk-ant-") {
+            return Ok(key);
+        }
+        if key.is_empty() {
+            anyhow::bail!("API key is required. Get one at https://console.anthropic.com/settings/keys");
+        }
+        println!("  Key should start with 'sk-ant-'. Try again.");
+    }
+}
+
+fn detect_shell_rc() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    if shell.contains("zsh") {
+        Some(home.join(".zshrc"))
+    } else if shell.contains("bash") {
+        let bashrc = home.join(".bashrc");
+        let profile = home.join(".bash_profile");
+        if profile.exists() { Some(profile) } else { Some(bashrc) }
+    } else {
+        None
+    }
 }
 
 async fn cmd_config(config_path: &Option<PathBuf>) -> Result<()> {

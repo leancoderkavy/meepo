@@ -5,6 +5,7 @@ use serde_json::Value;
 use anyhow::{Result, Context};
 use tokio::process::Command;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 use super::{ToolHandler, json_schema};
@@ -410,8 +411,22 @@ fn is_safe_url(url_str: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fetch URL content
-pub struct BrowseUrlTool;
+/// Fetch URL content — tries Tavily Extract for clean content, falls back to raw fetch
+pub struct BrowseUrlTool {
+    tavily: Option<Arc<crate::tavily::TavilyClient>>,
+}
+
+impl BrowseUrlTool {
+    /// Create with Tavily client for clean content extraction
+    pub fn with_tavily(client: Arc<crate::tavily::TavilyClient>) -> Self {
+        Self { tavily: Some(client) }
+    }
+
+    /// Create without Tavily — raw fetch only
+    pub fn new() -> Self {
+        Self { tavily: None }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for BrowseUrlTool {
@@ -420,7 +435,7 @@ impl ToolHandler for BrowseUrlTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch content from a URL and return the text. Useful for reading web pages, APIs, etc."
+        "Fetch content from a URL. Returns clean extracted text when available, otherwise raw HTML."
     }
 
     fn input_schema(&self) -> Value {
@@ -432,7 +447,7 @@ impl ToolHandler for BrowseUrlTool {
                 },
                 "headers": {
                     "type": "object",
-                    "description": "Optional HTTP headers to include"
+                    "description": "Optional HTTP headers to include (only used for raw fetch fallback)"
                 }
             }),
             vec!["url"],
@@ -446,9 +461,34 @@ impl ToolHandler for BrowseUrlTool {
 
         debug!("Fetching URL: {}", url);
 
-        // Validate URL for SSRF protection
+        // Validate URL for SSRF protection (applies to both paths)
         is_safe_url(url)?;
 
+        // Try Tavily Extract first for clean content
+        if let Some(tavily) = &self.tavily {
+            match tavily.extract(url).await {
+                Ok(content) => {
+                    debug!("Tavily extract succeeded for {}", url);
+                    const MAX_LENGTH: usize = 50000;
+                    if content.len() > MAX_LENGTH {
+                        return Ok(format!("{}\n\n[Content truncated at {} chars]",
+                                         &content[..MAX_LENGTH], MAX_LENGTH));
+                    }
+                    return Ok(content);
+                }
+                Err(e) => {
+                    debug!("Tavily extract failed for {}, falling back to raw fetch: {}", url, e);
+                }
+            }
+        }
+
+        // Fallback: raw fetch with redirect following
+        self.raw_fetch(url, &input).await
+    }
+}
+
+impl BrowseUrlTool {
+    async fn raw_fetch(&self, url: &str, input: &Value) -> Result<String> {
         let client = reqwest::Client::builder()
             .user_agent("meepo-agent/1.0")
             .timeout(std::time::Duration::from_secs(30))
@@ -456,7 +496,6 @@ impl ToolHandler for BrowseUrlTool {
             .build()
             .context("Failed to create HTTP client")?;
 
-        // Manual redirect following with validation
         let mut current_url = url.to_string();
         let mut redirects = 0;
         let max_redirects = 5;
@@ -464,11 +503,9 @@ impl ToolHandler for BrowseUrlTool {
         let response = loop {
             let mut request = client.get(&current_url);
 
-            // Add custom headers if provided (with CRLF injection protection)
             if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
                 for (key, value) in headers {
                     if let Some(value_str) = value.as_str() {
-                        // Validate that header name and value don't contain CRLF sequences
                         if key.contains('\r') || key.contains('\n') || value_str.contains('\r') || value_str.contains('\n') {
                             warn!("Skipping header '{}' due to CRLF characters", key);
                             continue;
@@ -490,11 +527,13 @@ impl ToolHandler for BrowseUrlTool {
                 if let Some(location) = resp.headers().get("location") {
                     let redirect_url = location.to_str()
                         .map_err(|_| anyhow::anyhow!("Invalid redirect URL"))?;
-                    // Resolve relative redirects
                     let resolved = if redirect_url.starts_with("http") {
                         redirect_url.to_string()
                     } else {
-                        format!("{}/{}", current_url.trim_end_matches('/'), redirect_url.trim_start_matches('/'))
+                        url::Url::parse(&current_url)
+                            .and_then(|base| base.join(redirect_url))
+                            .map(|u| u.to_string())
+                            .unwrap_or_else(|_| format!("{}/{}", current_url.trim_end_matches('/'), redirect_url.trim_start_matches('/')))
                     };
                     if is_safe_url(&resolved).is_err() {
                         return Ok(format!("Blocked redirect to unsafe URL: {}", resolved));
@@ -517,7 +556,6 @@ impl ToolHandler for BrowseUrlTool {
             .await
             .context("Failed to read response body")?;
 
-        // Truncate if too long
         const MAX_LENGTH: usize = 50000;
         if content.len() > MAX_LENGTH {
             Ok(format!("{}\n\n[Content truncated at {} chars]",
@@ -557,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_browse_url_schema() {
-        let tool = BrowseUrlTool;
+        let tool = BrowseUrlTool::new();
         assert_eq!(tool.name(), "browse_url");
     }
 
@@ -836,7 +874,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_browse_url_blocks_localhost() {
-        let tool = BrowseUrlTool;
+        let tool = BrowseUrlTool::new();
 
         let result = tool.execute(serde_json::json!({
             "url": "http://localhost:8080/admin"
@@ -849,7 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_browse_url_blocks_private_ip() {
-        let tool = BrowseUrlTool;
+        let tool = BrowseUrlTool::new();
 
         let result = tool.execute(serde_json::json!({
             "url": "http://192.168.1.1/router"

@@ -179,7 +179,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::system::RunCommandTool));
     registry.register(Arc::new(meepo_core::tools::system::ReadFileTool));
     registry.register(Arc::new(meepo_core::tools::system::WriteFileTool));
-    registry.register(Arc::new(meepo_core::tools::system::BrowseUrlTool));
+    registry.register(Arc::new(meepo_core::tools::system::BrowseUrlTool::new()));
     registry.register(Arc::new(meepo_core::tools::watchers::CreateWatcherTool::new(db.clone(), watcher_command_tx.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::ListWatchersTool::new(db.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::CancelWatcherTool::new(db.clone(), watcher_command_tx.clone())));

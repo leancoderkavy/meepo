@@ -180,23 +180,52 @@ impl AutonomousLoop {
         }
     }
 
-    /// Handle a watcher event
+    /// Handle a watcher event — look up the watcher's reply_channel and action,
+    /// then route the agent's response to the correct channel.
     async fn handle_watcher_event(&self, event: WatcherEvent) {
         info!("Processing watcher event: {} from {}", event.kind, event.watcher_id);
 
-        // Convert watcher event to IncomingMessage (same as current behavior)
+        // Look up the watcher to get reply_channel and action
+        let (reply_channel, action) = match self.db.get_watcher(&event.watcher_id).await {
+            Ok(Some(w)) => (
+                ChannelType::from_string(&w.reply_channel),
+                w.action,
+            ),
+            Ok(None) => {
+                error!("Watcher {} not found in database", event.watcher_id);
+                (ChannelType::Internal, String::new())
+            }
+            Err(e) => {
+                error!("Failed to look up watcher {}: {}", event.watcher_id, e);
+                (ChannelType::Internal, String::new())
+            }
+        };
+
+        // Build prompt with the watcher's action context
+        let content = if action.is_empty() {
+            format!("Watcher {} triggered: {}", event.watcher_id, event.payload)
+        } else {
+            format!(
+                "Watcher {} triggered: {}\nYour requested action: {}",
+                event.watcher_id, event.payload, action
+            )
+        };
+
         let msg = IncomingMessage {
             id: uuid::Uuid::new_v4().to_string(),
             sender: "watcher".to_string(),
-            content: format!("Watcher {} triggered: {}", event.watcher_id, event.payload),
-            channel: ChannelType::Internal,
+            content,
+            channel: reply_channel.clone(),
             timestamp: chrono::Utc::now(),
         };
 
         match self.agent.handle_message(msg).await {
-            Ok(response) => {
-                // For now, log internal responses (channel routing fix in Step 3)
-                info!("Watcher {} response: {}", event.watcher_id, &response.content[..response.content.len().min(200)]);
+            Ok(mut response) => {
+                // Route response to the watcher's reply_channel
+                response.channel = reply_channel;
+                if let Err(e) = self.response_tx.send(response).await {
+                    error!("Failed to send watcher response: {}", e);
+                }
             }
             Err(e) => error!("Failed to handle watcher event: {}", e),
         }

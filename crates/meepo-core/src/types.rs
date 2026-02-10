@@ -33,6 +33,19 @@ pub enum ChannelType {
     Internal, // for watcher-generated messages
 }
 
+impl ChannelType {
+    /// Parse a channel type from a string (e.g., from watcher reply_channel)
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "discord" => Self::Discord,
+            "slack" => Self::Slack,
+            "imessage" => Self::IMessage,
+            "email" => Self::Email,
+            _ => Self::Internal,
+        }
+    }
+}
+
 impl std::fmt::Display for ChannelType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -352,6 +352,9 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     // Initialize watcher command channel (needed for tool registration)
     let (watcher_command_tx, mut watcher_command_rx) = tokio::sync::mpsc::channel::<meepo_core::tools::watchers::WatcherCommand>(100);
 
+    // Initialize background task command channel
+    let (bg_task_tx, mut bg_task_rx) = tokio::sync::mpsc::channel::<meepo_core::tools::autonomous::BackgroundTaskCommand>(100);
+
     // Build tool registry
     let mut registry = meepo_core::tools::ToolRegistry::new();
     // Email, calendar, and UI automation tools require macOS or Windows platform support
@@ -418,6 +421,10 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::watchers::CreateWatcherTool::new(db.clone(), watcher_command_tx.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::ListWatchersTool::new(db.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::CancelWatcherTool::new(db.clone(), watcher_command_tx.clone())));
+    // Autonomous agent management tools
+    registry.register(Arc::new(meepo_core::tools::autonomous::SpawnBackgroundTaskTool::new(db.clone(), bg_task_tx.clone())));
+    registry.register(Arc::new(meepo_core::tools::autonomous::AgentStatusTool::new(db.clone())));
+    registry.register(Arc::new(meepo_core::tools::autonomous::StopTaskTool::new(db.clone(), watcher_command_tx.clone(), bg_task_tx.clone())));
     info!("Registered {} tools", registry.len());
 
     // Initialize progress channel for sub-agent orchestrator
@@ -660,6 +667,9 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         }
     });
 
+    // Clone bus_sender for background task handler before it moves into resp_to_bus
+    let bus_sender_for_bg = bus_sender.clone();
+
     // Forward loop responses to the bus sender
     let cancel_clone3 = cancel.clone();
     let resp_to_bus = tokio::spawn(async move {
@@ -736,6 +746,103 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                 WatcherCommand::List => {}
                             }
                         });
+                    }
+                }
+            }
+        }
+    });
+
+    // Handle background task commands
+    let cancel_clone_bg = cancel.clone();
+    let agent_bg = agent.clone();
+    let db_bg = db.clone();
+    let bus_sender_bg = bus_sender_for_bg;
+    let bg_task_handler = tokio::spawn(async move {
+        // Track cancellation tokens for background tasks
+        let task_cancels = Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::<String, tokio_util::sync::CancellationToken>::new()
+        ));
+
+        loop {
+            tokio::select! {
+                _ = cancel_clone_bg.cancelled() => break,
+                cmd = bg_task_rx.recv() => {
+                    match cmd {
+                        Some(meepo_core::tools::autonomous::BackgroundTaskCommand::Spawn { id, description, reply_channel }) => {
+                            info!("Spawning background task [{}]: {}", id, description);
+                            let task_cancel = tokio_util::sync::CancellationToken::new();
+                            task_cancels.lock().await.insert(id.clone(), task_cancel.clone());
+
+                            let agent = agent_bg.clone();
+                            let db = db_bg.clone();
+                            let bus = bus_sender_bg.clone();
+                            let task_cancels = task_cancels.clone();
+                            let id_clone = id.clone();
+                            let reply_channel_clone = reply_channel.clone();
+
+                            tokio::spawn(async move {
+                                // Update status to running
+                                if let Err(e) = db.update_background_task(&id_clone, "running", None).await {
+                                    error!("Failed to update task {} to running: {}", id_clone, e);
+                                }
+
+                                // Run the task as a message through the agent
+                                let msg = meepo_core::types::IncomingMessage {
+                                    id: id_clone.clone(),
+                                    sender: "background_task".to_string(),
+                                    content: description.clone(),
+                                    channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
+                                    timestamp: chrono::Utc::now(),
+                                };
+
+                                let result = tokio::select! {
+                                    _ = task_cancel.cancelled() => {
+                                        Err(anyhow::anyhow!("Task cancelled"))
+                                    }
+                                    result = agent.handle_message(msg) => result
+                                };
+
+                                match result {
+                                    Ok(response) => {
+                                        if let Err(e) = db.update_background_task(&id_clone, "completed", Some(&response.content)).await {
+                                            error!("Failed to update task {} to completed: {}", id_clone, e);
+                                        }
+                                        // Notify user on reply_channel
+                                        let notify_msg = meepo_core::types::OutgoingMessage {
+                                            content: format!("Background task [{}] completed:\n{}", id_clone, response.content),
+                                            channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
+                                            reply_to: None,
+                                        };
+                                        let _ = bus.send(notify_msg).await;
+                                    }
+                                    Err(e) => {
+                                        let err_msg = e.to_string();
+                                        let status = if err_msg.contains("cancelled") { "cancelled" } else { "failed" };
+                                        if let Err(e) = db.update_background_task(&id_clone, status, Some(&err_msg)).await {
+                                            error!("Failed to update task {} to {}: {}", id_clone, status, e);
+                                        }
+                                        if status == "failed" {
+                                            let notify_msg = meepo_core::types::OutgoingMessage {
+                                                content: format!("Background task [{}] failed: {}", id_clone, err_msg),
+                                                channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
+                                                reply_to: None,
+                                            };
+                                            let _ = bus.send(notify_msg).await;
+                                        }
+                                    }
+                                }
+
+                                // Clean up cancellation token
+                                task_cancels.lock().await.remove(&id_clone);
+                            });
+                        }
+                        Some(meepo_core::tools::autonomous::BackgroundTaskCommand::Cancel { id }) => {
+                            info!("Cancelling background task [{}]", id);
+                            if let Some(token) = task_cancels.lock().await.get(&id) {
+                                token.cancel();
+                            }
+                        }
+                        None => break,
                     }
                 }
             }
@@ -826,7 +933,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     cancel.cancel();
 
     // Wait for all tasks
-    let _ = tokio::join!(loop_task, bus_to_loop, watcher_to_loop, resp_to_bus, watcher_cmd_task, progress_task);
+    let _ = tokio::join!(loop_task, bus_to_loop, watcher_to_loop, resp_to_bus, watcher_cmd_task, progress_task, bg_task_handler);
 
     // Stop all watchers
     watcher_runner.lock().await.stop_all().await;
@@ -990,6 +1097,9 @@ async fn cmd_mcp_server(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::watchers::CreateWatcherTool::new(db.clone(), watcher_command_tx.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::ListWatchersTool::new(db.clone())));
     registry.register(Arc::new(meepo_core::tools::watchers::CancelWatcherTool::new(db.clone(), watcher_command_tx.clone())));
+    // Autonomous tools — agent_status works in MCP mode, spawn/stop won't have handlers
+    let (_bg_task_tx_mcp, _) = tokio::sync::mpsc::channel::<meepo_core::tools::autonomous::BackgroundTaskCommand>(1);
+    registry.register(Arc::new(meepo_core::tools::autonomous::AgentStatusTool::new(db.clone())));
 
     // Load skills if enabled
     if cfg.skills.enabled {

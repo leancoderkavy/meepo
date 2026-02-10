@@ -12,7 +12,7 @@ pub mod graph;
 pub mod memory_sync;
 
 // Re-export main types
-pub use sqlite::{KnowledgeDb, Entity, Relationship, Conversation, Watcher, Goal, UserPreference, ActionLogEntry};
+pub use sqlite::{KnowledgeDb, Entity, Relationship, Conversation, Watcher, Goal, UserPreference, ActionLogEntry, BackgroundTask};
 pub use tantivy::{TantivyIndex, SearchResult};
 pub use graph::KnowledgeGraph;
 pub use memory_sync::{load_memory, save_memory, load_soul};

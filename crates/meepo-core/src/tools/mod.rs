@@ -18,6 +18,7 @@ pub mod delegate;
 pub mod system;
 pub mod search;
 pub mod filesystem;
+pub mod autonomous;
 
 /// Trait for executing tools
 #[async_trait]

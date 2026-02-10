@@ -127,7 +127,7 @@ main() {
         if [ -n "$shell_rc" ]; then
             echo "  Add it now? This appends to $shell_rc"
             printf "  [Y/n] "
-            read -r yn </dev/tty
+            if read -r yn </dev/tty 2>/dev/null; then : ; else yn="Y"; fi
             if [ "${yn:-Y}" != "n" ] && [ "${yn:-Y}" != "N" ]; then
                 echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$shell_rc"
                 export PATH="$INSTALL_DIR:$PATH"
@@ -143,18 +143,24 @@ main() {
     echo "  Meepo ${version} installed!"
     echo ""
 
-    # Run setup
-    printf "  Run interactive setup now? [Y/n] "
-    read -r yn </dev/tty
-    if [ "${yn:-Y}" != "n" ] && [ "${yn:-Y}" != "N" ]; then
-        echo ""
-        "$INSTALL_DIR/meepo" setup
+    # Run setup (skip if non-interactive)
+    if [ -t 0 ] 2>/dev/null || { echo -n '' > /dev/tty; } 2>/dev/null; then
+        printf "  Run interactive setup now? [Y/n] "
+        if read -r yn </dev/tty 2>/dev/null; then : ; else yn="n"; fi
+        if [ "${yn:-Y}" != "n" ] && [ "${yn:-Y}" != "N" ]; then
+            echo ""
+            "$INSTALL_DIR/meepo" setup
+        else
+            echo ""
+            echo "  Next steps:"
+            echo "    meepo setup          # interactive setup wizard"
+            echo "    meepo start          # start the daemon"
+            echo ""
+        fi
     else
-        echo ""
         echo "  Next steps:"
         echo "    meepo setup          # interactive setup wizard"
-        echo "    meepo init           # just create config (no wizard)"
-        echo "    meepo ask \"Hello\"    # one-shot question"
+        echo "    meepo start          # start the daemon"
         echo ""
     fi
 }

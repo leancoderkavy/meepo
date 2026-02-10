@@ -100,6 +100,19 @@ pub struct ActionLogEntry {
     pub created_at: DateTime<Utc>,
 }
 
+/// Background task spawned by the agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundTask {
+    pub id: String,
+    pub description: String,
+    pub status: String,           // pending, running, completed, failed, cancelled
+    pub reply_channel: String,
+    pub spawned_by: String,       // "agent" or watcher ID
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub result: Option<String>,
+}
+
 /// SQLite database wrapper (thread-safe via Arc<Mutex>)
 pub struct KnowledgeDb {
     conn: Arc<Mutex<Connection>>,
@@ -259,6 +272,25 @@ impl KnowledgeDb {
         )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_action_log_goal ON action_log(goal_id)",
+            [],
+        )?;
+
+        // Create background_tasks table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS background_tasks (
+                id TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                reply_channel TEXT NOT NULL,
+                spawned_by TEXT NOT NULL DEFAULT 'agent',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                result TEXT
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status)",
             [],
         )?;
 
@@ -651,7 +683,7 @@ impl KnowledgeDb {
         let reply_channel = reply_channel.to_owned();
 
         tokio::task::spawn_blocking(move || {
-            let id = Uuid::new_v4().to_string();
+            let id = format!("w-{}", Uuid::new_v4());
             let now = Utc::now();
             let config_json = serde_json::to_string(&config)?;
             let conn = conn.lock().unwrap_or_else(|poisoned| {
@@ -724,6 +756,33 @@ impl KnowledgeDb {
             active: row.get::<_, i64>(5)? != 0,
             created_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| Utc::now()),
         })
+    }
+
+    /// Get a single watcher by ID
+    pub async fn get_watcher(&self, id: &str) -> Result<Option<Watcher>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let mut stmt = conn.prepare(
+                "SELECT id, kind, config, action, reply_channel, active, created_at
+                 FROM watchers
+                 WHERE id = ?1",
+            )?;
+
+            let mut rows = stmt.query_map(params![&id], Self::row_to_watcher)?;
+            match rows.next() {
+                Some(Ok(w)) => Ok(Some(w)),
+                Some(Err(e)) => Err(e.into()),
+                None => Ok(None),
+            }
+        })
+        .await
+        .context("spawn_blocking task panicked")?
     }
 
     /// Update watcher active status
@@ -1108,6 +1167,125 @@ impl KnowledgeDb {
         .await
         .context("spawn_blocking task panicked")?
     }
+
+    /// Insert a new background task
+    pub async fn insert_background_task(
+        &self,
+        id: &str,
+        description: &str,
+        reply_channel: &str,
+        spawned_by: &str,
+    ) -> Result<()> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_owned();
+        let description = description.to_owned();
+        let reply_channel = reply_channel.to_owned();
+        let spawned_by = spawned_by.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let now = Utc::now();
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            conn.execute(
+                "INSERT INTO background_tasks (id, description, status, reply_channel, spawned_by, created_at, updated_at)
+                 VALUES (?1, ?2, 'pending', ?3, ?4, ?5, ?6)",
+                params![&id, &description, &reply_channel, &spawned_by, now.to_rfc3339(), now.to_rfc3339()],
+            )?;
+            debug!("Inserted background task: {} ({})", description, id);
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Update background task status and optionally set result
+    pub async fn update_background_task(
+        &self,
+        id: &str,
+        status: &str,
+        result: Option<&str>,
+    ) -> Result<()> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_owned();
+        let status = status.to_owned();
+        let result = result.map(|s| s.to_owned());
+
+        tokio::task::spawn_blocking(move || {
+            let now = Utc::now();
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            conn.execute(
+                "UPDATE background_tasks SET status = ?1, result = COALESCE(?2, result), updated_at = ?3 WHERE id = ?4",
+                params![&status, result, now.to_rfc3339(), &id],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get active (pending or running) background tasks
+    pub async fn get_active_background_tasks(&self) -> Result<Vec<BackgroundTask>> {
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let mut stmt = conn.prepare(
+                "SELECT id, description, status, reply_channel, spawned_by, created_at, updated_at, result
+                 FROM background_tasks WHERE status IN ('pending', 'running')
+                 ORDER BY created_at DESC",
+            )?;
+            let tasks = stmt
+                .query_map([], Self::row_to_background_task)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(tasks)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get recently completed/failed background tasks
+    pub async fn get_recent_background_tasks(&self, limit: usize) -> Result<Vec<BackgroundTask>> {
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let mut stmt = conn.prepare(
+                "SELECT id, description, status, reply_channel, spawned_by, created_at, updated_at, result
+                 FROM background_tasks WHERE status IN ('completed', 'failed')
+                 ORDER BY updated_at DESC LIMIT ?1",
+            )?;
+            let tasks = stmt
+                .query_map(params![limit as i64], Self::row_to_background_task)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(tasks)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    fn row_to_background_task(row: &rusqlite::Row) -> rusqlite::Result<BackgroundTask> {
+        Ok(BackgroundTask {
+            id: row.get(0)?,
+            description: row.get(1)?,
+            status: row.get(2)?,
+            reply_channel: row.get(3)?,
+            spawned_by: row.get(4)?,
+            created_at: row.get::<_, String>(5)?.parse().unwrap_or_else(|_| Utc::now()),
+            updated_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| Utc::now()),
+            result: row.get(7)?,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1233,6 +1411,39 @@ mod tests {
         let actions = db.get_recent_actions(10).await?;
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_type, "sent_email");
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_background_task_operations() -> Result<()> {
+        let temp_path = env::temp_dir().join(format!("test_bg_tasks_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert task
+        db.insert_background_task("t-123", "Research competitors", "slack", "agent").await?;
+
+        // Get active tasks
+        let active = db.get_active_background_tasks().await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "t-123");
+        assert_eq!(active[0].status, "pending");
+
+        // Update to running
+        db.update_background_task("t-123", "running", None).await?;
+        let active = db.get_active_background_tasks().await?;
+        assert_eq!(active[0].status, "running");
+
+        // Complete with result
+        db.update_background_task("t-123", "completed", Some("Found 3 competitors")).await?;
+        let active = db.get_active_background_tasks().await?;
+        assert_eq!(active.len(), 0);
+
+        let recent = db.get_recent_background_tasks(10).await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].result.as_deref(), Some("Found 3 competitors"));
 
         let _ = std::fs::remove_file(&temp_path);
         Ok(())

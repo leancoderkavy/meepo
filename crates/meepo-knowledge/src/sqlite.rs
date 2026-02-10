@@ -70,6 +70,7 @@ pub struct Goal {
     pub check_interval_secs: i64,
     pub last_checked_at: Option<DateTime<Utc>>,
     pub source_channel: Option<String>,
+    pub source: String,          // "user" or "template:<name>"
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -226,6 +227,7 @@ impl KnowledgeDb {
                 check_interval_secs INTEGER NOT NULL DEFAULT 1800,
                 last_checked_at TEXT,
                 source_channel TEXT,
+                source TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",
@@ -235,6 +237,12 @@ impl KnowledgeDb {
             "CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)",
             [],
         )?;
+
+        // Migration: Add source column to existing goals tables
+        let _ = conn.execute(
+            "ALTER TABLE goals ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+            [],
+        );
 
         // Create user_preferences table
         conn.execute(
@@ -833,11 +841,13 @@ impl KnowledgeDb {
         check_interval_secs: i64,
         success_criteria: Option<&str>,
         source_channel: Option<&str>,
+        source: &str,
     ) -> Result<String> {
         let conn = Arc::clone(&self.conn);
         let description = description.to_owned();
         let success_criteria = success_criteria.map(|s| s.to_owned());
         let source_channel = source_channel.map(|s| s.to_owned());
+        let source = source.to_owned();
 
         tokio::task::spawn_blocking(move || {
             let id = Uuid::new_v4().to_string();
@@ -847,9 +857,9 @@ impl KnowledgeDb {
                 poisoned.into_inner()
             });
             conn.execute(
-                "INSERT INTO goals (id, description, status, priority, success_criteria, check_interval_secs, source_channel, created_at, updated_at)
-                 VALUES (?1, ?2, 'active', ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![&id, &description, priority, success_criteria, check_interval_secs, source_channel, now.to_rfc3339(), now.to_rfc3339()],
+                "INSERT INTO goals (id, description, status, priority, success_criteria, check_interval_secs, source_channel, source, created_at, updated_at)
+                 VALUES (?1, ?2, 'active', ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![&id, &description, priority, success_criteria, check_interval_secs, source_channel, &source, now.to_rfc3339(), now.to_rfc3339()],
             )?;
             debug!("Inserted goal: {} ({})", description, id);
             Ok(id)
@@ -869,7 +879,7 @@ impl KnowledgeDb {
             });
             let mut stmt = conn.prepare(
                 "SELECT id, description, status, priority, success_criteria, strategy,
-                        check_interval_secs, last_checked_at, source_channel, created_at, updated_at
+                        check_interval_secs, last_checked_at, source_channel, source, created_at, updated_at
                  FROM goals
                  WHERE status = 'active'
                    AND (last_checked_at IS NULL
@@ -897,7 +907,7 @@ impl KnowledgeDb {
             });
             let mut stmt = conn.prepare(
                 "SELECT id, description, status, priority, success_criteria, strategy,
-                        check_interval_secs, last_checked_at, source_channel, created_at, updated_at
+                        check_interval_secs, last_checked_at, source_channel, source, created_at, updated_at
                  FROM goals WHERE status = 'active'
                  ORDER BY priority DESC, created_at ASC",
             )?;
@@ -954,6 +964,27 @@ impl KnowledgeDb {
         .context("spawn_blocking task panicked")?
     }
 
+    /// Delete all goals with a given source (e.g. "template:stock-analyst")
+    pub async fn delete_goals_by_source(&self, source: &str) -> Result<usize> {
+        let conn = Arc::clone(&self.conn);
+        let source = source.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let count = conn.execute(
+                "DELETE FROM goals WHERE source = ?1",
+                params![&source],
+            )?;
+            debug!("Deleted {} goals with source: {}", count, source);
+            Ok(count)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
     /// Helper to convert row to Goal
     fn row_to_goal(row: &rusqlite::Row) -> rusqlite::Result<Goal> {
         Ok(Goal {
@@ -967,8 +998,9 @@ impl KnowledgeDb {
             last_checked_at: row.get::<_, Option<String>>(7)?
                 .and_then(|s| s.parse().ok()),
             source_channel: row.get(8)?,
-            created_at: row.get::<_, String>(9)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            source: row.get(9)?,
+            created_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            updated_at: row.get::<_, String>(11)?.parse().unwrap_or_else(|_| Utc::now()),
         })
     }
 
@@ -1346,14 +1378,15 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        // Insert goal
-        let id = db.insert_goal("Review PRs daily", 3, 3600, Some("All PRs reviewed"), Some("discord")).await?;
+        // Insert goal with user source
+        let id = db.insert_goal("Review PRs daily", 3, 3600, Some("All PRs reviewed"), Some("discord"), "user").await?;
         assert!(!id.is_empty());
 
         // Get active goals
         let goals = db.get_active_goals().await?;
         assert_eq!(goals.len(), 1);
         assert_eq!(goals[0].description, "Review PRs daily");
+        assert_eq!(goals[0].source, "user");
 
         // Get due goals (should be due immediately since last_checked_at is NULL)
         let due = db.get_due_goals().await?;
@@ -1370,6 +1403,17 @@ mod tests {
         db.update_goal_status(&id, "completed").await?;
         let active = db.get_active_goals().await?;
         assert_eq!(active.len(), 0);
+
+        // Test template goals and delete by source
+        let _template_id = db.insert_goal("Monitor stocks", 4, 900, None, None, "template:stock-analyst").await?;
+        let active = db.get_active_goals().await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].source, "template:stock-analyst");
+
+        let deleted = db.delete_goals_by_source("template:stock-analyst").await?;
+        assert_eq!(deleted, 1);
+        let remaining = db.get_active_goals().await?;
+        assert_eq!(remaining.len(), 0);
 
         let _ = std::fs::remove_file(&temp_path);
         Ok(())

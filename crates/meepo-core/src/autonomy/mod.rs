@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{info, error, debug};
 
 use crate::agent::Agent;
-use crate::types::{IncomingMessage, OutgoingMessage, ChannelType};
+use crate::types::{IncomingMessage, MessageKind, OutgoingMessage, ChannelType};
 use meepo_knowledge::KnowledgeDb;
 use meepo_scheduler::WatcherEvent;
 
@@ -25,6 +25,8 @@ pub struct AutonomyConfig {
     pub enabled: bool,
     pub tick_interval_secs: u64,
     pub max_goals: usize,
+    /// Send acknowledgment/typing indicators before processing messages
+    pub send_acknowledgments: bool,
 }
 
 /// Input that the autonomous loop processes each tick
@@ -170,6 +172,17 @@ impl AutonomousLoop {
         let channel = msg.channel.clone();
         info!("Processing user message from {} on {}", msg.sender, channel);
 
+        // Send acknowledgment so the user knows we're working on it
+        if self.config.send_acknowledgments {
+            let ack = OutgoingMessage {
+                content: String::new(), // each channel decides what to show
+                channel: msg.channel.clone(),
+                reply_to: Some(msg.id.clone()),
+                kind: MessageKind::Acknowledgment,
+            };
+            let _ = self.response_tx.send(ack).await;
+        }
+
         match self.agent.handle_message(msg).await {
             Ok(response) => {
                 if let Err(e) = self.response_tx.send(response).await {
@@ -259,7 +272,7 @@ mod tests {
 
         let mut loop_ = AutonomousLoop::new(
             agent, db,
-            AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50 },
+            AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50, send_acknowledgments: true },
             msg_rx, watcher_rx, resp_tx, wake,
         );
 
@@ -286,7 +299,7 @@ mod tests {
 
         let mut loop_ = AutonomousLoop::new(
             agent, db,
-            AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50 },
+            AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50, send_acknowledgments: true },
             msg_rx, watcher_rx, resp_tx, wake,
         );
 

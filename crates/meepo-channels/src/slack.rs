@@ -2,7 +2,7 @@
 
 use crate::bus::MessageChannel;
 use crate::rate_limit::RateLimiter;
-use meepo_core::types::{ChannelType, IncomingMessage, OutgoingMessage};
+use meepo_core::types::{ChannelType, IncomingMessage, MessageKind, OutgoingMessage};
 use tokio::sync::mpsc;
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
@@ -23,6 +23,9 @@ pub struct SlackChannel {
     bot_user_id: Arc<RwLock<Option<String>>>,
     /// Maps Slack user_id -> DM channel_id for routing replies
     channel_map: Arc<DashMap<String, String>>,
+    /// Maps original message_id -> (channel_id, message_ts) for pending ack messages
+    /// Used to update "Thinking..." placeholders with the real response
+    pending_acks: Arc<DashMap<String, (String, String)>>,
 }
 
 impl SlackChannel {
@@ -37,6 +40,7 @@ impl SlackChannel {
             poll_interval,
             bot_user_id: Arc::new(RwLock::new(None)),
             channel_map: Arc::new(DashMap::new()),
+            pending_acks: Arc::new(DashMap::new()),
         }
     }
 
@@ -69,13 +73,13 @@ impl SlackChannel {
         Ok(body)
     }
 
-    /// Post a message to a Slack channel
+    /// Post a message to a Slack channel, returning the message timestamp (ts)
     async fn post_message(
         client: &reqwest::Client,
         token: &str,
         channel: &str,
         text: &str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let url = "https://slack.com/api/chat.postMessage";
         let body = serde_json::json!({
             "channel": channel,
@@ -94,6 +98,42 @@ impl SlackChannel {
         if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
             let err = result.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
             return Err(anyhow!("Slack chat.postMessage error: {}", err));
+        }
+
+        let ts = result.get("ts")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(ts)
+    }
+
+    /// Update an existing Slack message (used to replace "Thinking..." with real response)
+    async fn update_message(
+        client: &reqwest::Client,
+        token: &str,
+        channel: &str,
+        ts: &str,
+        text: &str,
+    ) -> Result<()> {
+        let url = "https://slack.com/api/chat.update";
+        let body = serde_json::json!({
+            "channel": channel,
+            "ts": ts,
+            "text": text,
+        });
+
+        let response = client
+            .post(url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await?;
+
+        let result: serde_json::Value = response.json().await?;
+
+        if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            let err = result.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+            return Err(anyhow!("Slack chat.update error: {}", err));
         }
 
         Ok(())
@@ -330,18 +370,13 @@ impl MessageChannel for SlackChannel {
     }
 
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
-        debug!("Sending Slack message");
-
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
 
         // Find the channel to send to
-        // Try to extract user_id from reply_to (format: "slack_{channel}_{ts}")
-        // Fall back to first known DM channel
         let channel_id = if let Some(reply_to) = &msg.reply_to {
             if let Some(stripped) = reply_to.strip_prefix("slack_") {
-                // Format: "slack_{channel_id}_{ts}"
                 stripped.split('_').next().unwrap_or("").to_string()
             } else {
                 String::new()
@@ -351,7 +386,6 @@ impl MessageChannel for SlackChannel {
         };
 
         let channel_id = if channel_id.is_empty() {
-            // Fall back to first known channel
             self.channel_map
                 .iter()
                 .next()
@@ -361,8 +395,38 @@ impl MessageChannel for SlackChannel {
             channel_id
         };
 
-        Self::post_message(&client, &self.bot_token, &channel_id, &msg.content).await?;
+        // Handle acknowledgment: post "Thinking..." placeholder
+        if msg.kind == MessageKind::Acknowledgment {
+            debug!("Sending Slack acknowledgment to channel {}", channel_id);
+            match Self::post_message(&client, &self.bot_token, &channel_id, "Thinking...").await {
+                Ok(ts) => {
+                    if let Some(reply_to) = &msg.reply_to {
+                        self.pending_acks.insert(reply_to.clone(), (channel_id, ts));
+                    }
+                }
+                Err(e) => warn!("Failed to send Slack acknowledgment: {}", e),
+            }
+            return Ok(());
+        }
 
+        // Normal response: check if there's a pending ack to update
+        if let Some(reply_to) = &msg.reply_to {
+            if let Some((_, (ack_channel, ack_ts))) = self.pending_acks.remove(reply_to) {
+                debug!("Updating Slack acknowledgment message with response");
+                match Self::update_message(&client, &self.bot_token, &ack_channel, &ack_ts, &msg.content).await {
+                    Ok(()) => {
+                        info!("Slack message updated successfully (replaced Thinking...)");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("Failed to update Slack message, posting new one: {}", e);
+                        // Fall through to post as new message
+                    }
+                }
+            }
+        }
+
+        Self::post_message(&client, &self.bot_token, &channel_id, &msg.content).await?;
         info!("Slack message sent successfully");
         Ok(())
     }
@@ -406,6 +470,7 @@ mod tests {
             content: "test".to_string(),
             channel: ChannelType::Slack,
             reply_to: None,
+            kind: MessageKind::Response,
         };
         let result = channel.send(msg).await;
         assert!(result.is_err()); // No channels mapped yet

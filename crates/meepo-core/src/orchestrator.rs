@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::api::{ApiClient, ToolDefinition, Usage};
 use crate::tools::{ToolExecutor, ToolRegistry};
-use crate::types::{ChannelType, OutgoingMessage};
+use crate::types::{ChannelType, MessageKind, OutgoingMessage};
 
 /// Execution mode for a task group
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -216,6 +216,7 @@ impl TaskOrchestrator {
             content: message.to_string(),
             channel: channel.clone(),
             reply_to: reply_to.clone(),
+            kind: MessageKind::Response,
         };
         if let Err(e) = self.progress_tx.send(msg).await {
             warn!("Failed to send progress message: {}", e);
@@ -311,6 +312,7 @@ impl TaskOrchestrator {
                 content: format!("Started {} background tasks...", task_count),
                 channel: channel.clone(),
                 reply_to: reply_to.clone(),
+                kind: MessageKind::Response,
             }).await;
 
             let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -338,6 +340,7 @@ impl TaskOrchestrator {
                             content: update,
                             channel: channel.clone(),
                             reply_to: reply_to.clone(),
+                            kind: MessageKind::Response,
                         }).await;
                         results.push(result);
                     }
@@ -346,6 +349,7 @@ impl TaskOrchestrator {
                             content: format!("A background task panicked: {}", e),
                             channel: channel.clone(),
                             reply_to: reply_to.clone(),
+                            kind: MessageKind::Response,
                         }).await;
                         results.push(SubTaskResult {
                             task_id: "unknown".to_string(),
@@ -362,6 +366,7 @@ impl TaskOrchestrator {
                 content: format!("All background tasks complete:\n\n{}", summary),
                 channel: channel.clone(),
                 reply_to: reply_to.clone(),
+                kind: MessageKind::Response,
             }).await;
 
             active_counter.fetch_sub(1, Ordering::SeqCst);

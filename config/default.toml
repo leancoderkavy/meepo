@@ -50,16 +50,8 @@ enabled = false
 bot_token = "${SLACK_BOT_TOKEN}"
 poll_interval_secs = 3
 
-<<<<<<< Updated upstream
-# ── iMessage (macOS only) ────────────────────────────────────────
-# No API key needed — uses macOS Messages.app directly.
-# Requires: Full Disk Access for your terminal app.
-#   System Settings → Privacy & Security → Full Disk Access → toggle ON
-# Messages starting with trigger_prefix are processed; replies via AppleScript.
-# NOTE: This channel is not available on Windows.
-=======
 
-# ── iMessage Channel ──────────────────────────────────────────────
+# ── iMessage Channel (macOS only) ─────────────────────────────────
 # Talk to Meepo via iMessage. No API key needed — uses macOS directly.
 #
 # Requirements:
@@ -72,8 +64,7 @@ poll_interval_secs = 3
 #   - Processes all messages from allowed contacts
 #   - Sends replies via AppleScript through Messages.app
 #
-# Example: Text "What's on my calendar?" to get a response.
->>>>>>> Stashed changes
+# NOTE: This channel is not available on Windows.
 
 [channels.imessage]
 enabled = false
@@ -102,13 +93,8 @@ allowed_contacts = []                   # e.g. ["+15551234567", "me@icloud.com"]
 
 [channels.email]
 enabled = false                          # Set to true to enable
-<<<<<<< Updated upstream
 poll_interval_secs = 10                  # How often to check for new emails
 subject_prefix = "[meepo]"              # Emails must have this subject prefix
-=======
-poll_interval_secs = 3                   # How often to check for new messages
-allowed_contacts = []                    # Phone numbers or emails, e.g. ["+15551234567", "me@icloud.com"]
->>>>>>> Stashed changes
 
 
 # ── Knowledge Graph ──────────────────────────────────────────────
@@ -167,6 +153,7 @@ max_goals = 50                # prevent runaway goal creation
 preference_decay_days = 30    # confidence decay period
 min_confidence_to_act = 0.5   # below this, ask user first
 max_tokens_per_tick = 4096    # budget per think phase
+send_acknowledgments = true   # send typing/ack indicators before processing
 
 
 # ── MCP Server ──────────────────────────────────────────────────

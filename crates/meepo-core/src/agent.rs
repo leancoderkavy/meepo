@@ -6,7 +6,7 @@ use tracing::{info, debug};
 
 use crate::api::ApiClient;
 use crate::tools::{ToolExecutor, ToolRegistry};
-use crate::types::{IncomingMessage, OutgoingMessage};
+use crate::types::{IncomingMessage, MessageKind, OutgoingMessage};
 use crate::context::build_system_prompt;
 
 use meepo_knowledge::KnowledgeDb;
@@ -89,6 +89,7 @@ impl Agent {
             content: response_text,
             channel: msg.channel,
             reply_to: Some(msg.id),
+            kind: MessageKind::Response,
         })
     }
 

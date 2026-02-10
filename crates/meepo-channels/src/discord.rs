@@ -2,7 +2,7 @@
 
 use crate::bus::MessageChannel;
 use crate::rate_limit::RateLimiter;
-use meepo_core::types::{IncomingMessage, OutgoingMessage, ChannelType};
+use meepo_core::types::{IncomingMessage, MessageKind, OutgoingMessage, ChannelType};
 use serenity::{
     async_trait,
     model::prelude::*,
@@ -307,35 +307,39 @@ impl MessageChannel for DiscordChannel {
         let http = http_guard.as_ref()
             .ok_or_else(|| anyhow!("Discord channel not started yet"))?;
 
-        debug!("Sending Discord message");
-
         // Look up channel from reply_to if present
         let channel_id = if let Some(reply_to) = &msg.reply_to {
-            // Look up the channel from our LRU message_channels map
             let mut lru = self.message_channels.lock().await;
             if let Some(channel) = lru.get(reply_to) {
                 debug!("Found channel from reply_to: {}", reply_to);
                 Some(*channel)
             } else {
-                // reply_to not found, fall back to first available channel
                 warn!("reply_to '{}' not found in message tracking, falling back to first available channel", reply_to);
                 self.user_channel_map.iter().next().map(|entry| *entry.value())
             }
         } else {
-            // No reply_to specified, use first available channel
             self.user_channel_map.iter().next().map(|entry| *entry.value())
         };
 
-        if let Some(channel_id) = channel_id {
-            // Send the message
-            channel_id.say(http, &msg.content).await
-                .map_err(|e| anyhow!("Failed to send Discord message: {}", e))?;
+        let channel_id = channel_id
+            .ok_or_else(|| anyhow!("No Discord users have messaged the bot yet"))?;
 
-            info!("Discord message sent successfully to channel {}", channel_id);
-            Ok(())
-        } else {
-            Err(anyhow!("No Discord users have messaged the bot yet"))
+        // Handle acknowledgment: show native "is typing..." indicator
+        if msg.kind == MessageKind::Acknowledgment {
+            debug!("Sending Discord typing indicator to channel {}", channel_id);
+            if let Err(e) = channel_id.broadcast_typing(http).await {
+                warn!("Failed to send Discord typing indicator: {}", e);
+            }
+            return Ok(());
         }
+
+        // Normal response: send text message
+        debug!("Sending Discord message");
+        channel_id.say(http, &msg.content).await
+            .map_err(|e| anyhow!("Failed to send Discord message: {}", e))?;
+
+        info!("Discord message sent successfully to channel {}", channel_id);
+        Ok(())
     }
 
     fn channel_type(&self) -> ChannelType {

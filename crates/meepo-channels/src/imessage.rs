@@ -2,7 +2,7 @@
 
 use crate::bus::MessageChannel;
 use crate::rate_limit::RateLimiter;
-use meepo_core::types::{IncomingMessage, OutgoingMessage, ChannelType};
+use meepo_core::types::{IncomingMessage, MessageKind, OutgoingMessage, ChannelType};
 use tokio::sync::mpsc;
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
@@ -303,17 +303,13 @@ impl MessageChannel for IMessageChannel {
     }
 
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
-        debug!("Sending iMessage");
-
         // Look up recipient from reply_to message tracking (LRU cache)
         let recipient = if let Some(reply_to) = &msg.reply_to {
-            // Look up the sender from our LRU message_senders cache
             let mut lru = self.message_senders.lock().await;
             if let Some(sender) = lru.get(reply_to) {
                 debug!("Found recipient from reply_to: {}", sender);
                 sender.clone()
             } else {
-                // reply_to not found in map, fall back to first allowed contact
                 warn!("reply_to '{}' not found in message tracking, falling back to first allowed contact", reply_to);
                 if self.allowed_contacts.is_empty() {
                     return Err(anyhow!("No allowed contacts configured for iMessage"));
@@ -321,15 +317,23 @@ impl MessageChannel for IMessageChannel {
                 self.allowed_contacts[0].clone()
             }
         } else {
-            // No reply_to specified, use first allowed contact
             if self.allowed_contacts.is_empty() {
                 return Err(anyhow!("No allowed contacts configured for iMessage"));
             }
             self.allowed_contacts[0].clone()
         };
 
-        self.send_imessage(&recipient, &msg.content).await?;
+        // Handle acknowledgment: send a quick "thinking" message
+        if msg.kind == MessageKind::Acknowledgment {
+            debug!("Sending iMessage acknowledgment to {}", recipient);
+            if let Err(e) = self.send_imessage(&recipient, "On it, thinking...").await {
+                warn!("Failed to send iMessage acknowledgment: {}", e);
+            }
+            return Ok(());
+        }
 
+        // Normal response
+        self.send_imessage(&recipient, &msg.content).await?;
         info!("iMessage sent successfully to {}", recipient);
         Ok(())
     }

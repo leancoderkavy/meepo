@@ -2,7 +2,7 @@
 
 use crate::bus::MessageChannel;
 use crate::rate_limit::RateLimiter;
-use meepo_core::types::{IncomingMessage, OutgoingMessage, ChannelType};
+use meepo_core::types::{IncomingMessage, MessageKind, OutgoingMessage, ChannelType};
 use tokio::sync::mpsc;
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
@@ -278,16 +278,35 @@ impl MessageChannel for EmailChannel {
     }
 
     async fn send(&self, msg: OutgoingMessage) -> Result<()> {
-        debug!("Sending email reply");
-
         if let Some(reply_to) = &msg.reply_to {
             let lru = self.message_senders.lock().await;
             if let Some(meta) = lru.peek(reply_to) {
                 let subject = meta.subject.clone();
                 let sender = meta.sender.clone();
                 drop(lru);
+
+                // Handle acknowledgment: send auto-reply
+                if msg.kind == MessageKind::Acknowledgment {
+                    debug!("Sending email acknowledgment to {}", sender);
+                    if let Err(e) = self.reply_to_email(
+                        &subject,
+                        &sender,
+                        "Your message has been received. Working on a response...",
+                    ).await {
+                        warn!("Failed to send email acknowledgment: {}", e);
+                    }
+                    return Ok(());
+                }
+
+                // Normal response
                 return self.reply_to_email(&subject, &sender, &msg.content).await;
             }
+        }
+
+        // Acknowledgments without reply context are silently ignored
+        if msg.kind == MessageKind::Acknowledgment {
+            debug!("Skipping email acknowledgment — no reply context");
+            return Ok(());
         }
 
         warn!("Cannot send email without reply context (no reply_to or sender unknown)");
@@ -358,6 +377,7 @@ mod tests {
             content: "test reply".to_string(),
             channel: ChannelType::Email,
             reply_to: None,
+            kind: MessageKind::Response,
         };
 
         let result = channel.send(msg).await;

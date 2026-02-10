@@ -1,6 +1,8 @@
 //! Central message bus for routing messages between channels and the agent
 
 use meepo_core::types::{IncomingMessage, OutgoingMessage, ChannelType};
+#[cfg(test)]
+use meepo_core::types::MessageKind;
 use tokio::sync::mpsc;
 use std::collections::HashMap;
 use async_trait::async_trait;
@@ -236,6 +238,7 @@ mod tests {
             content: "test".to_string(),
             channel: ChannelType::Discord,
             reply_to: None,
+            kind: MessageKind::Response,
         };
         sender.send(msg).await.unwrap();
         assert!(sent_flag.load(Ordering::SeqCst));
@@ -253,6 +256,7 @@ mod tests {
             content: "test".to_string(),
             channel: ChannelType::Slack,
             reply_to: None,
+            kind: MessageKind::Response,
         };
         let result = sender.send(msg).await;
         assert!(result.is_err());

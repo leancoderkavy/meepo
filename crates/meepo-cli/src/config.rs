@@ -261,6 +261,8 @@ pub struct AutonomyConfig {
     pub min_confidence_to_act: f64,
     #[serde(default = "default_max_tokens_per_tick")]
     pub max_tokens_per_tick: u32,
+    #[serde(default = "default_send_acknowledgments")]
+    pub send_acknowledgments: bool,
 }
 
 fn default_autonomy_enabled() -> bool { true }
@@ -269,6 +271,7 @@ fn default_max_goals() -> usize { 50 }
 fn default_preference_decay_days() -> u32 { 30 }
 fn default_min_confidence() -> f64 { 0.5 }
 fn default_max_tokens_per_tick() -> u32 { 4096 }
+fn default_send_acknowledgments() -> bool { true }
 
 fn default_autonomy_config() -> AutonomyConfig {
     AutonomyConfig {
@@ -278,6 +281,7 @@ fn default_autonomy_config() -> AutonomyConfig {
         preference_decay_days: default_preference_decay_days(),
         min_confidence_to_act: default_min_confidence(),
         max_tokens_per_tick: default_max_tokens_per_tick(),
+        send_acknowledgments: default_send_acknowledgments(),
     }
 }
 

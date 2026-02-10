@@ -836,6 +836,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                             content: format!("Background task [{}] completed:\n{}", id_clone, response.content),
                                             channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
                                             reply_to: None,
+                                            kind: meepo_core::types::MessageKind::Response,
                                         };
                                         let _ = bus.send(notify_msg).await;
                                     }
@@ -850,6 +851,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                                 content: format!("Background task [{}] failed: {}", id_clone, err_msg),
                                                 channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
                                                 reply_to: None,
+                                                kind: meepo_core::types::MessageKind::Response,
                                             };
                                             let _ = bus.send(notify_msg).await;
                                         }
@@ -894,6 +896,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         enabled: cfg.autonomy.enabled,
         tick_interval_secs: cfg.autonomy.tick_interval_secs,
         max_goals: cfg.autonomy.max_goals,
+        send_acknowledgments: cfg.autonomy.send_acknowledgments,
     };
 
     let auto_loop = meepo_core::autonomy::AutonomousLoop::new(

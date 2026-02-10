@@ -28,7 +28,7 @@ pub use orchestrator::{
     SubTask, SubTaskResult, SubTaskStatus, TaskGroup, TaskOrchestrator,
 };
 pub use tools::{ToolExecutor, ToolHandler, ToolRegistry};
-pub use types::{ChannelType, IncomingMessage, OutgoingMessage};
+pub use types::{ChannelType, IncomingMessage, MessageKind, OutgoingMessage};
 
 #[cfg(test)]
 mod tests {

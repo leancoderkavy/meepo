@@ -13,6 +13,17 @@ pub struct IncomingMessage {
     pub timestamp: DateTime<Utc>,
 }
 
+/// What kind of outgoing message this is
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageKind {
+    /// Normal response message
+    #[default]
+    Response,
+    /// Acknowledgment/typing indicator — channel decides how to display
+    Acknowledgment,
+}
+
 /// Outgoing message to be sent to a channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutgoingMessage {
@@ -20,6 +31,8 @@ pub struct OutgoingMessage {
     pub channel: ChannelType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>, // original message id
+    #[serde(default)]
+    pub kind: MessageKind,
 }
 
 /// Type of communication channel

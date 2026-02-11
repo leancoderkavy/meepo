@@ -85,6 +85,53 @@ pub trait ContactsProvider: Send + Sync {
     async fn search_contacts(&self, query: &str) -> Result<String>;
 }
 
+/// Browser tab metadata
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BrowserTab {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub is_active: bool,
+    pub window_index: u32,
+}
+
+/// Page content with both text and HTML
+#[derive(Debug, Clone)]
+pub struct PageContent {
+    pub text: String,
+    pub html: String,
+    pub url: String,
+    pub title: String,
+}
+
+/// Browser cookie
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BrowserCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+}
+
+/// Browser automation provider
+#[async_trait]
+pub trait BrowserProvider: Send + Sync {
+    async fn list_tabs(&self) -> Result<Vec<BrowserTab>>;
+    async fn open_tab(&self, url: &str) -> Result<BrowserTab>;
+    async fn close_tab(&self, tab_id: &str) -> Result<()>;
+    async fn switch_tab(&self, tab_id: &str) -> Result<()>;
+    async fn get_page_content(&self, tab_id: Option<&str>) -> Result<PageContent>;
+    async fn execute_javascript(&self, tab_id: Option<&str>, script: &str) -> Result<String>;
+    async fn click_element(&self, tab_id: Option<&str>, selector: &str) -> Result<()>;
+    async fn fill_form(&self, tab_id: Option<&str>, selector: &str, value: &str) -> Result<()>;
+    async fn screenshot_page(&self, tab_id: Option<&str>, path: Option<&str>) -> Result<String>;
+    async fn go_back(&self, tab_id: Option<&str>) -> Result<()>;
+    async fn go_forward(&self, tab_id: Option<&str>) -> Result<()>;
+    async fn reload(&self, tab_id: Option<&str>) -> Result<()>;
+    async fn get_cookies(&self, tab_id: Option<&str>) -> Result<Vec<BrowserCookie>>;
+    async fn get_page_url(&self, tab_id: Option<&str>) -> Result<String>;
+}
+
 /// Create platform email provider
 pub fn create_email_provider() -> Box<dyn EmailProvider> {
     #[cfg(target_os = "macos")]
@@ -173,6 +220,14 @@ pub fn create_contacts_provider() -> Box<dyn ContactsProvider> {
     { panic!("Contacts provider only available on macOS") }
 }
 
+/// Create platform browser provider (macOS: Safari via AppleScript)
+pub fn create_browser_provider() -> Box<dyn BrowserProvider> {
+    #[cfg(target_os = "macos")]
+    { Box::new(macos::MacOsSafariBrowser) }
+    #[cfg(not(target_os = "macos"))]
+    { panic!("Browser provider not yet available on this platform") }
+}
+
 /// Cross-platform clipboard using `arboard` crate
 pub struct CrossPlatformClipboard;
 
@@ -255,5 +310,6 @@ mod tests {
         let _screen = create_screen_capture_provider();
         let _music = create_music_provider();
         let _contacts = create_contacts_provider();
+        let _browser = create_browser_provider();
     }
 }

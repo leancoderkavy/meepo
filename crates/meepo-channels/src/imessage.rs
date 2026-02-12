@@ -20,6 +20,9 @@ use lru::LruCache;
 const MAX_MESSAGE_SENDERS: usize = 1000;
 const MAX_MESSAGE_SIZE: usize = 10_240;
 
+/// Acknowledgment text sent by Meepo (used to skip echo/auto-reply loops)
+const ACK_TEXT: &str = "On it, thinking...";
+
 /// iMessage channel adapter
 pub struct IMessageChannel {
     poll_interval: Duration,
@@ -145,6 +148,14 @@ impl IMessageChannel {
 
                 let content = text.trim().to_string();
 
+                // Skip messages that match our own ack text (prevents echo loops
+                // when the recipient has auto-reply or AI assistants enabled)
+                if content == ACK_TEXT {
+                    debug!("Skipping echo of our ack message from {}", handle);
+                    new_last_rowid = new_last_rowid.max(rowid);
+                    continue;
+                }
+
                 // Check message size limit
                 if content.len() > MAX_MESSAGE_SIZE {
                     warn!(
@@ -246,6 +257,32 @@ end tell"#,
         info!("iMessage sent successfully to {}", recipient);
         Ok(())
     }
+
+    /// After sending an ack, bump the ROWID watermark so the poller
+    /// skips any auto-reply that arrives in response to our ack.
+    async fn bump_watermark_after_send(&self) {
+        // Small delay to let the sent message propagate to chat.db
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        if let Ok(conn) = Connection::open_with_flags(
+            &self.db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok(max_rowid) = conn.query_row::<i64, _, _>(
+                "SELECT COALESCE(MAX(ROWID), 0) FROM message",
+                [],
+                |row| row.get(0),
+            ) {
+                let mut guard = self.last_rowid.write().await;
+                if let Some(current) = *guard {
+                    if max_rowid > current {
+                        debug!("Bumping last_rowid from {} to {} after ack send", current, max_rowid);
+                        *guard = Some(max_rowid);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -326,8 +363,11 @@ impl MessageChannel for IMessageChannel {
         // Handle acknowledgment: send a quick "thinking" message
         if msg.kind == MessageKind::Acknowledgment {
             debug!("Sending iMessage acknowledgment to {}", recipient);
-            if let Err(e) = self.send_imessage(&recipient, "On it, thinking...").await {
+            if let Err(e) = self.send_imessage(&recipient, ACK_TEXT).await {
                 warn!("Failed to send iMessage acknowledgment: {}", e);
+            } else {
+                // Bump watermark to skip any auto-reply triggered by our ack
+                self.bump_watermark_after_send().await;
             }
             return Ok(());
         }

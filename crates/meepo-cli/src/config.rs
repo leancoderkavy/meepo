@@ -24,6 +24,8 @@ pub struct MeepoConfig {
     pub a2a: A2aConfig,
     #[serde(default)]
     pub skills: SkillsConfig,
+    #[serde(default)]
+    pub browser: BrowserConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,6 +390,28 @@ impl Default for SkillsConfig {
         Self {
             enabled: false,
             dir: default_skills_dir(),
+        }
+    }
+}
+
+// ── Browser Config ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserConfig {
+    #[serde(default = "default_browser_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_browser_name")]
+    pub default_browser: String,
+}
+
+fn default_browser_enabled() -> bool { true }
+fn default_browser_name() -> String { "safari".to_string() }
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_browser_enabled(),
+            default_browser: default_browser_name(),
         }
     }
 }

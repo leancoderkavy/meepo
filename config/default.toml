@@ -210,3 +210,22 @@ allowed_tools = []              # tools available to incoming A2A tasks
 [skills]
 enabled = false
 dir = "~/.meepo/skills"
+
+
+# ── Browser Automation (macOS only) ──────────────────────────────
+# Control Safari or Chrome via AppleScript.
+# Tools: browser_list_tabs, browser_open_tab, browser_close_tab,
+#         browser_switch_tab, browser_get_page_content, browser_execute_js,
+#         browser_click, browser_fill_form, browser_navigate,
+#         browser_get_url, browser_screenshot
+#
+# Requirements:
+#   - macOS with Safari or Google Chrome installed
+#   - Safari: Enable "Allow JavaScript from Apple Events" in
+#     Safari → Settings → Advanced → check "Show features for web developers"
+#     then Develop menu → Allow JavaScript from Apple Events
+#   - Chrome: No extra setup needed (AppleScript support built-in)
+
+[browser]
+enabled = true
+default_browser = "safari"              # "safari" or "chrome"

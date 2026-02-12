@@ -220,12 +220,28 @@ pub fn create_contacts_provider() -> Box<dyn ContactsProvider> {
     { panic!("Contacts provider only available on macOS") }
 }
 
-/// Create platform browser provider (macOS: Safari via AppleScript)
+/// Create Safari browser provider (macOS only)
 pub fn create_browser_provider() -> Box<dyn BrowserProvider> {
-    #[cfg(target_os = "macos")]
-    { Box::new(macos::MacOsSafariBrowser) }
-    #[cfg(not(target_os = "macos"))]
-    { panic!("Browser provider not yet available on this platform") }
+    create_browser_provider_for("safari")
+}
+
+/// Create browser provider for a specific browser
+pub fn create_browser_provider_for(browser: &str) -> Box<dyn BrowserProvider> {
+    match browser.to_lowercase().as_str() {
+        "safari" => {
+            #[cfg(target_os = "macos")]
+            { Box::new(macos::MacOsSafariBrowser) }
+            #[cfg(not(target_os = "macos"))]
+            { panic!("Safari browser provider only available on macOS") }
+        }
+        "chrome" | "google chrome" => {
+            #[cfg(target_os = "macos")]
+            { Box::new(macos::MacOsChromeBrowser) }
+            #[cfg(not(target_os = "macos"))]
+            { panic!("Chrome browser provider only available on macOS") }
+        }
+        _ => panic!("Unsupported browser: {}. Supported: safari, chrome", browser),
+    }
 }
 
 /// Cross-platform clipboard using `arboard` crate

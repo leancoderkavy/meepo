@@ -32,6 +32,7 @@ Meepo runs as a daemon on your machine, monitoring your configured channels for 
 | Clipboard | `arboard` crate (cross-platform) | `arboard` crate (cross-platform) |
 | App launching | `open` crate (cross-platform) | `open` crate (cross-platform) |
 | UI automation | System Events (AppleScript) | System.Windows.Automation (PowerShell) |
+| Browser automation | Safari + Chrome (AppleScript) | Not yet available |
 | iMessage channel | Messages.app (SQLite + AppleScript) | Not available |
 | Email channel | Mail.app polling | Not available (use email tools instead) |
 | Background service | `launchd` agent | Windows Task Scheduler |
@@ -234,6 +235,10 @@ default_workspace = "~/Coding"
 
 [memory]
 workspace = "~/.meepo/workspace"       # Contains SOUL.md and MEMORY.md
+
+[browser]
+enabled = true                         # Enable browser automation tools
+default_browser = "safari"             # "safari" or "chrome"
 ```
 
 Environment variables are expanded with `${VAR_NAME}` syntax. Paths support `~/` expansion.
@@ -246,6 +251,7 @@ Meepo registers 25 tools that Claude can use during conversations:
 |----------|-------|
 | **Email & Calendar** | `read_emails`, `send_email`, `read_calendar`, `create_calendar_event`, `open_app`, `get_clipboard` |
 | **UI Automation** | `read_screen`, `click_element`, `type_text` |
+| **Browser** | `browser_list_tabs`, `browser_open_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_get_page_content`, `browser_execute_js`, `browser_click`, `browser_fill_form`, `browser_navigate`, `browser_get_url`, `browser_screenshot` |
 | **Code** | `write_code`, `make_pr`, `review_pr` |
 | **Web** | `web_search`, `browse_url` |
 | **Memory** | `remember`, `recall`, `search_knowledge`, `link_entities` |

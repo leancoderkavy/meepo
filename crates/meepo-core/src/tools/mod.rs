@@ -11,6 +11,7 @@ use crate::api::ToolDefinition;
 
 pub mod macos;
 pub mod accessibility;
+pub mod browser;
 pub mod code;
 pub mod memory;
 pub mod watchers;

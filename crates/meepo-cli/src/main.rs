@@ -425,6 +425,23 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         registry.register(Arc::new(meepo_core::tools::macos::MusicControlTool::new()));
         registry.register(Arc::new(meepo_core::tools::macos::SearchContactsTool::new()));
     }
+    // Browser automation tools (macOS: Safari/Chrome via AppleScript)
+    #[cfg(target_os = "macos")]
+    if cfg.browser.enabled {
+        let browser = &cfg.browser.default_browser;
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserListTabsTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserOpenTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserCloseTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserSwitchTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserGetPageContentTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserExecuteJsTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserClickElementTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserFillFormTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserNavigateTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserGetUrlTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserScreenshotTool::new(browser)));
+        info!("Registered browser tools (browser: {})", browser);
+    }
     let code_config = meepo_core::tools::code::CodeToolConfig {
         claude_code_path: shellexpand_str(&cfg.code.claude_code_path),
         gh_path: shellexpand_str(&cfg.code.gh_path),
@@ -1268,6 +1285,22 @@ async fn cmd_mcp_server(config_path: &Option<PathBuf>) -> Result<()> {
         registry.register(Arc::new(meepo_core::tools::macos::GetCurrentTrackTool::new()));
         registry.register(Arc::new(meepo_core::tools::macos::MusicControlTool::new()));
         registry.register(Arc::new(meepo_core::tools::macos::SearchContactsTool::new()));
+    }
+    // Browser automation tools for ask command
+    #[cfg(target_os = "macos")]
+    if cfg.browser.enabled {
+        let browser = &cfg.browser.default_browser;
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserListTabsTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserOpenTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserCloseTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserSwitchTabTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserGetPageContentTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserExecuteJsTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserClickElementTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserFillFormTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserNavigateTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserGetUrlTool::new(browser)));
+        registry.register(Arc::new(meepo_core::tools::browser::BrowserScreenshotTool::new(browser)));
     }
     let code_config = meepo_core::tools::code::CodeToolConfig {
         claude_code_path: shellexpand_str(&cfg.code.claude_code_path),

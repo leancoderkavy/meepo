@@ -5,7 +5,7 @@ use anyhow::{Result, Context};
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-use super::{EmailProvider, CalendarProvider, UiAutomation, RemindersProvider, NotesProvider, NotificationProvider, ScreenCaptureProvider, MusicProvider, ContactsProvider};
+use super::{EmailProvider, CalendarProvider, UiAutomation, RemindersProvider, NotesProvider, NotificationProvider, ScreenCaptureProvider, MusicProvider, ContactsProvider, BrowserProvider, BrowserTab, PageContent, BrowserCookie};
 
 /// Sanitize a string for safe use in AppleScript
 fn sanitize_applescript_string(input: &str) -> String {
@@ -565,6 +565,471 @@ tell application "Contacts"
 end tell
 "#, safe_query, safe_query);
         run_applescript(&script).await
+    }
+}
+
+/// Safari browser automation via AppleScript
+pub struct MacOsSafariBrowser;
+
+#[async_trait]
+impl BrowserProvider for MacOsSafariBrowser {
+    async fn list_tabs(&self) -> Result<Vec<BrowserTab>> {
+        let script = r#"
+tell application "Safari"
+    set output to ""
+    set winIdx to 1
+    repeat with w in windows
+        set tabIdx to 1
+        repeat with t in tabs of w
+            set isActive to (current tab of w is t)
+            set activeStr to "false"
+            if isActive then set activeStr to "true"
+            set output to output & winIdx & "|" & tabIdx & "|" & (name of t) & "|" & (URL of t) & "|" & activeStr & "\n"
+            set tabIdx to tabIdx + 1
+        end repeat
+        set winIdx to winIdx + 1
+    end repeat
+    return output
+end tell
+"#;
+        let raw = run_applescript(script).await?;
+        let mut tabs = Vec::new();
+        for line in raw.lines() {
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() >= 5 {
+                let win_idx: u32 = parts[0].trim().parse().unwrap_or(1);
+                let tab_idx = parts[1].trim();
+                tabs.push(BrowserTab {
+                    id: format!("safari:{}:{}", win_idx, tab_idx),
+                    title: parts[2].to_string(),
+                    url: parts[3].to_string(),
+                    is_active: parts[4].trim() == "true",
+                    window_index: win_idx,
+                });
+            }
+        }
+        Ok(tabs)
+    }
+
+    async fn open_tab(&self, url: &str) -> Result<BrowserTab> {
+        let safe_url = sanitize_applescript_string(url);
+        let script = format!(r#"
+tell application "Safari"
+    activate
+    tell window 1
+        set newTab to make new tab with properties {{URL:"{}"}}
+        set current tab to newTab
+        return (name of newTab) & "|" & (URL of newTab)
+    end tell
+end tell
+"#, safe_url);
+        let raw = run_applescript(&script).await?;
+        let parts: Vec<&str> = raw.splitn(2, '|').collect();
+        Ok(BrowserTab {
+            id: "safari:1:new".to_string(),
+            title: parts.first().unwrap_or(&"").to_string(),
+            url: parts.get(1).unwrap_or(&url).trim().to_string(),
+            is_active: true,
+            window_index: 1,
+        })
+    }
+
+    async fn close_tab(&self, tab_id: &str) -> Result<()> {
+        let (win, tab) = parse_safari_tab_id(tab_id)?;
+        let script = format!(r#"
+tell application "Safari"
+    close tab {} of window {}
+end tell
+"#, tab, win);
+        run_applescript(&script).await?;
+        Ok(())
+    }
+
+    async fn switch_tab(&self, tab_id: &str) -> Result<()> {
+        let (win, tab) = parse_safari_tab_id(tab_id)?;
+        let script = format!(r#"
+tell application "Safari"
+    set current tab of window {} to tab {} of window {}
+end tell
+"#, win, tab, win);
+        run_applescript(&script).await?;
+        Ok(())
+    }
+
+    async fn get_page_content(&self, tab_id: Option<&str>) -> Result<PageContent> {
+        let tab_clause = safari_tab_clause(tab_id)?;
+        let script = format!(r#"
+tell application "Safari"
+    set t to {}
+    set pageTitle to name of t
+    set pageUrl to URL of t
+    set pageText to do JavaScript "document.body.innerText.substring(0, 50000)" in t
+    set pageHtml to do JavaScript "document.documentElement.outerHTML.substring(0, 50000)" in t
+    return pageTitle & "|||" & pageUrl & "|||" & pageText & "|||" & pageHtml
+end tell
+"#, tab_clause);
+        let raw = run_applescript(&script).await?;
+        let parts: Vec<&str> = raw.splitn(4, "|||").collect();
+        Ok(PageContent {
+            title: parts.first().unwrap_or(&"").to_string(),
+            url: parts.get(1).unwrap_or(&"").to_string(),
+            text: parts.get(2).unwrap_or(&"").to_string(),
+            html: parts.get(3).unwrap_or(&"").to_string(),
+        })
+    }
+
+    async fn execute_javascript(&self, tab_id: Option<&str>, script: &str) -> Result<String> {
+        let tab_clause = safari_tab_clause(tab_id)?;
+        let safe_script = sanitize_applescript_string(script);
+        let applescript = format!(r#"
+tell application "Safari"
+    set t to {}
+    do JavaScript "{}" in t
+end tell
+"#, tab_clause, safe_script);
+        run_applescript(&applescript).await
+    }
+
+    async fn click_element(&self, tab_id: Option<&str>, selector: &str) -> Result<()> {
+        let safe_selector = sanitize_applescript_string(selector);
+        let js = format!("document.querySelector('{}').click()", safe_selector);
+        self.execute_javascript(tab_id, &js).await?;
+        Ok(())
+    }
+
+    async fn fill_form(&self, tab_id: Option<&str>, selector: &str, value: &str) -> Result<()> {
+        let safe_selector = sanitize_applescript_string(selector);
+        let safe_value = sanitize_applescript_string(value);
+        let js = format!(
+            "var el = document.querySelector('{}'); el.value = '{}'; el.dispatchEvent(new Event('input', {{bubbles: true}}))",
+            safe_selector, safe_value
+        );
+        self.execute_javascript(tab_id, &js).await?;
+        Ok(())
+    }
+
+    async fn screenshot_page(&self, _tab_id: Option<&str>, path: Option<&str>) -> Result<String> {
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let output_path = path
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| format!("/tmp/meepo-browser-screenshot-{}.png", timestamp));
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            Command::new("screencapture")
+                .arg("-x")
+                .arg(&output_path)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Screenshot timed out"))?
+        .context("Failed to run screencapture")?;
+        if output.status.success() {
+            Ok(format!("Screenshot saved to {}", output_path))
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow::anyhow!("Screenshot failed: {}", error))
+        }
+    }
+
+    async fn go_back(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "history.back()").await?;
+        Ok(())
+    }
+
+    async fn go_forward(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "history.forward()").await?;
+        Ok(())
+    }
+
+    async fn reload(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "location.reload()").await?;
+        Ok(())
+    }
+
+    async fn get_cookies(&self, tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
+        let raw = self.execute_javascript(tab_id, "document.cookie").await?;
+        let cookies = raw.split(';')
+            .filter_map(|c| {
+                let parts: Vec<&str> = c.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    Some(BrowserCookie {
+                        name: parts[0].trim().to_string(),
+                        value: parts[1].trim().to_string(),
+                        domain: String::new(),
+                        path: "/".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(cookies)
+    }
+
+    async fn get_page_url(&self, tab_id: Option<&str>) -> Result<String> {
+        let tab_clause = safari_tab_clause(tab_id)?;
+        let script = format!(r#"
+tell application "Safari"
+    return URL of {}
+end tell
+"#, tab_clause);
+        let url = run_applescript(&script).await?;
+        Ok(url.trim().to_string())
+    }
+}
+
+/// Parse a Safari tab ID like "safari:1:2" into (window, tab) indices
+fn parse_safari_tab_id(tab_id: &str) -> Result<(u32, u32)> {
+    let parts: Vec<&str> = tab_id.split(':').collect();
+    if parts.len() >= 3 && parts[0] == "safari" {
+        let win: u32 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid window index in tab_id"))?;
+        let tab: u32 = parts[2].parse().map_err(|_| anyhow::anyhow!("Invalid tab index in tab_id"))?;
+        Ok((win, tab))
+    } else {
+        Err(anyhow::anyhow!("Invalid Safari tab_id format: expected 'safari:window:tab'"))
+    }
+}
+
+/// Build AppleScript clause to reference a Safari tab
+fn safari_tab_clause(tab_id: Option<&str>) -> Result<String> {
+    match tab_id {
+        Some(id) => {
+            let (win, tab) = parse_safari_tab_id(id)?;
+            Ok(format!("tab {} of window {}", tab, win))
+        }
+        None => Ok("current tab of window 1".to_string()),
+    }
+}
+
+/// Google Chrome browser automation via AppleScript
+pub struct MacOsChromeBrowser;
+
+#[async_trait]
+impl BrowserProvider for MacOsChromeBrowser {
+    async fn list_tabs(&self) -> Result<Vec<BrowserTab>> {
+        let script = r#"
+tell application "Google Chrome"
+    set output to ""
+    set winIdx to 1
+    repeat with w in windows
+        set tabIdx to 1
+        repeat with t in tabs of w
+            set isActive to (active tab index of w is tabIdx)
+            set activeStr to "false"
+            if isActive then set activeStr to "true"
+            set output to output & winIdx & "|" & tabIdx & "|" & (title of t) & "|" & (URL of t) & "|" & activeStr & "\n"
+            set tabIdx to tabIdx + 1
+        end repeat
+        set winIdx to winIdx + 1
+    end repeat
+    return output
+end tell
+"#;
+        let raw = run_applescript(script).await?;
+        let mut tabs = Vec::new();
+        for line in raw.lines() {
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() >= 5 {
+                let win_idx: u32 = parts[0].trim().parse().unwrap_or(1);
+                let tab_idx = parts[1].trim();
+                tabs.push(BrowserTab {
+                    id: format!("chrome:{}:{}", win_idx, tab_idx),
+                    title: parts[2].to_string(),
+                    url: parts[3].to_string(),
+                    is_active: parts[4].trim() == "true",
+                    window_index: win_idx,
+                });
+            }
+        }
+        Ok(tabs)
+    }
+
+    async fn open_tab(&self, url: &str) -> Result<BrowserTab> {
+        let safe_url = sanitize_applescript_string(url);
+        let script = format!(r#"
+tell application "Google Chrome"
+    activate
+    tell window 1
+        set newTab to make new tab with properties {{URL:"{}"}}
+        return (title of newTab) & "|" & (URL of newTab)
+    end tell
+end tell
+"#, safe_url);
+        let raw = run_applescript(&script).await?;
+        let parts: Vec<&str> = raw.splitn(2, '|').collect();
+        Ok(BrowserTab {
+            id: "chrome:1:new".to_string(),
+            title: parts.first().unwrap_or(&"").to_string(),
+            url: parts.get(1).unwrap_or(&url).trim().to_string(),
+            is_active: true,
+            window_index: 1,
+        })
+    }
+
+    async fn close_tab(&self, tab_id: &str) -> Result<()> {
+        let (win, tab) = parse_chrome_tab_id(tab_id)?;
+        let script = format!(r#"
+tell application "Google Chrome"
+    close tab {} of window {}
+end tell
+"#, tab, win);
+        run_applescript(&script).await?;
+        Ok(())
+    }
+
+    async fn switch_tab(&self, tab_id: &str) -> Result<()> {
+        let (win, tab) = parse_chrome_tab_id(tab_id)?;
+        let script = format!(r#"
+tell application "Google Chrome"
+    set active tab index of window {} to {}
+end tell
+"#, win, tab);
+        run_applescript(&script).await?;
+        Ok(())
+    }
+
+    async fn get_page_content(&self, tab_id: Option<&str>) -> Result<PageContent> {
+        let tab_clause = chrome_tab_clause(tab_id)?;
+        let script = format!(r#"
+tell application "Google Chrome"
+    set t to {}
+    set pageTitle to title of t
+    set pageUrl to URL of t
+    set pageText to execute t javascript "document.body.innerText.substring(0, 50000)"
+    set pageHtml to execute t javascript "document.documentElement.outerHTML.substring(0, 50000)"
+    return pageTitle & "|||" & pageUrl & "|||" & pageText & "|||" & pageHtml
+end tell
+"#, tab_clause);
+        let raw = run_applescript(&script).await?;
+        let parts: Vec<&str> = raw.splitn(4, "|||").collect();
+        Ok(PageContent {
+            title: parts.first().unwrap_or(&"").to_string(),
+            url: parts.get(1).unwrap_or(&"").to_string(),
+            text: parts.get(2).unwrap_or(&"").to_string(),
+            html: parts.get(3).unwrap_or(&"").to_string(),
+        })
+    }
+
+    async fn execute_javascript(&self, tab_id: Option<&str>, script: &str) -> Result<String> {
+        let tab_clause = chrome_tab_clause(tab_id)?;
+        let safe_script = sanitize_applescript_string(script);
+        let applescript = format!(r#"
+tell application "Google Chrome"
+    set t to {}
+    execute t javascript "{}"
+end tell
+"#, tab_clause, safe_script);
+        run_applescript(&applescript).await
+    }
+
+    async fn click_element(&self, tab_id: Option<&str>, selector: &str) -> Result<()> {
+        let safe_selector = sanitize_applescript_string(selector);
+        let js = format!("document.querySelector('{}').click()", safe_selector);
+        self.execute_javascript(tab_id, &js).await?;
+        Ok(())
+    }
+
+    async fn fill_form(&self, tab_id: Option<&str>, selector: &str, value: &str) -> Result<()> {
+        let safe_selector = sanitize_applescript_string(selector);
+        let safe_value = sanitize_applescript_string(value);
+        let js = format!(
+            "var el = document.querySelector('{}'); el.value = '{}'; el.dispatchEvent(new Event('input', {{bubbles: true}}))",
+            safe_selector, safe_value
+        );
+        self.execute_javascript(tab_id, &js).await?;
+        Ok(())
+    }
+
+    async fn screenshot_page(&self, _tab_id: Option<&str>, path: Option<&str>) -> Result<String> {
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let output_path = path
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| format!("/tmp/meepo-browser-screenshot-{}.png", timestamp));
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            Command::new("screencapture")
+                .arg("-x")
+                .arg(&output_path)
+                .output()
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Screenshot timed out"))?
+        .context("Failed to run screencapture")?;
+        if output.status.success() {
+            Ok(format!("Screenshot saved to {}", output_path))
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow::anyhow!("Screenshot failed: {}", error))
+        }
+    }
+
+    async fn go_back(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "history.back()").await?;
+        Ok(())
+    }
+
+    async fn go_forward(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "history.forward()").await?;
+        Ok(())
+    }
+
+    async fn reload(&self, tab_id: Option<&str>) -> Result<()> {
+        self.execute_javascript(tab_id, "location.reload()").await?;
+        Ok(())
+    }
+
+    async fn get_cookies(&self, tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
+        let raw = self.execute_javascript(tab_id, "document.cookie").await?;
+        let cookies = raw.split(';')
+            .filter_map(|c| {
+                let parts: Vec<&str> = c.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    Some(BrowserCookie {
+                        name: parts[0].trim().to_string(),
+                        value: parts[1].trim().to_string(),
+                        domain: String::new(),
+                        path: "/".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(cookies)
+    }
+
+    async fn get_page_url(&self, tab_id: Option<&str>) -> Result<String> {
+        let tab_clause = chrome_tab_clause(tab_id)?;
+        let script = format!(r#"
+tell application "Google Chrome"
+    return URL of {}
+end tell
+"#, tab_clause);
+        let url = run_applescript(&script).await?;
+        Ok(url.trim().to_string())
+    }
+}
+
+/// Parse a Chrome tab ID like "chrome:1:2" into (window, tab) indices
+fn parse_chrome_tab_id(tab_id: &str) -> Result<(u32, u32)> {
+    let parts: Vec<&str> = tab_id.split(':').collect();
+    if parts.len() >= 3 && parts[0] == "chrome" {
+        let win: u32 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid window index in tab_id"))?;
+        let tab: u32 = parts[2].parse().map_err(|_| anyhow::anyhow!("Invalid tab index in tab_id"))?;
+        Ok((win, tab))
+    } else {
+        Err(anyhow::anyhow!("Invalid Chrome tab_id format: expected 'chrome:window:tab'"))
+    }
+}
+
+/// Build AppleScript clause to reference a Chrome tab
+fn chrome_tab_clause(tab_id: Option<&str>) -> Result<String> {
+    match tab_id {
+        Some(id) => {
+            let (win, tab) = parse_chrome_tab_id(id)?;
+            Ok(format!("tab {} of window {}", tab, win))
+        }
+        None => Ok("active tab of window 1".to_string()),
     }
 }
 

@@ -143,8 +143,8 @@ impl ToolHandler for RunCommandTool {
             "pwd", "which", "file", "stat", "du", "df", "uptime", "ps", "env",
             "printenv", "hostname", "id", "groups", "grep", "find", "sort", "uniq",
             "cut", "awk", "sed", "tr", "basename", "dirname", "realpath", "readlink",
-            // File operations
-            "mkdir", "cp", "mv", "touch", "ln", "chmod", "tar", "zip", "unzip", "gzip",
+            // File operations (mv removed — can overwrite critical files)
+            "mkdir", "cp", "touch", "ln", "chmod", "tar", "zip", "unzip", "gzip",
             // Networking
             "curl", "wget", "ping", "dig", "nslookup",
             // Development tools
@@ -154,16 +154,45 @@ impl ToolHandler for RunCommandTool {
             "open", "osascript", "defaults", "pbcopy", "pbpaste", "say",
         ];
 
-        // Extract the first command word (before spaces, pipes, semicolons, etc.)
-        let first_word = command
-            .split(&[' ', '|', ';', '&', '\n', '\t'][..])
-            .find(|s| !s.is_empty())
-            .unwrap_or("");
+        // Shell metacharacters that allow chaining/redirecting commands.
+        // We split on these to extract EVERY command in the pipeline and validate each one.
+        const SHELL_CHAIN_CHARS: &[char] = &['|', ';', '&', '\n'];
 
-        // Check if the command is in the allowlist
-        if !ALLOWED_COMMANDS.contains(&first_word) {
-            warn!("Blocked command not in allowlist: {}", first_word);
-            return Err(anyhow::anyhow!("Command '{}' is not in the allowlist of safe commands", first_word));
+        // Also block dangerous shell operators that can't be split simply
+        let dangerous_operators = [
+            "`", "$(", ">>", ">", "<(", ">(",
+        ];
+        for op in &dangerous_operators {
+            if command.contains(op) {
+                warn!("Blocked command containing shell operator '{}': {}", op, command);
+                return Err(anyhow::anyhow!(
+                    "Command blocked: shell operator '{}' is not allowed for security reasons", op
+                ));
+            }
+        }
+
+        // Split on chain characters and validate EVERY command in the pipeline
+        let segments: Vec<&str> = command.split(SHELL_CHAIN_CHARS)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if segments.is_empty() {
+            return Err(anyhow::anyhow!("Empty command"));
+        }
+
+        for segment in &segments {
+            let first_word = segment
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+
+            if !ALLOWED_COMMANDS.contains(&first_word) {
+                warn!("Blocked command not in allowlist: '{}' (in segment: '{}')", first_word, segment);
+                return Err(anyhow::anyhow!(
+                    "Command '{}' is not in the allowlist of safe commands", first_word
+                ));
+            }
         }
 
         // Secondary blocklist check for extra safety
@@ -173,7 +202,6 @@ impl ToolHandler for RunCommandTool {
             "sudo rm",
             "mkfs",
             "dd if=",
-            "> /dev/",
             ":(){ :|:& };:",
         ];
 
@@ -348,6 +376,42 @@ impl ToolHandler for WriteFileTool {
     }
 }
 
+/// Check if an IP address is private/loopback/link-local (unsafe for SSRF)
+fn is_private_ip(ip: &std::net::IpAddr) -> Option<&'static str> {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+            if octets[0] == 10 {
+                Some("private IP range (10.x.x.x)")
+            } else if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                Some("private IP range (172.16-31.x.x)")
+            } else if octets[0] == 192 && octets[1] == 168 {
+                Some("private IP range (192.168.x.x)")
+            } else if octets[0] == 169 && octets[1] == 254 {
+                Some("link-local address (169.254.x.x)")
+            } else if octets[0] == 127 {
+                Some("loopback address")
+            } else if octets[0] == 0 {
+                Some("unspecified address (0.x.x.x)")
+            } else {
+                None
+            }
+        }
+        IpAddr::V6(ipv6) => {
+            if ipv6.is_loopback() {
+                Some("IPv6 loopback")
+            } else if ipv6.segments()[0] & 0xffc0 == 0xfe80 {
+                Some("IPv6 link-local address")
+            } else if ipv6.segments()[0] & 0xfe00 == 0xfc00 {
+                Some("IPv6 unique local address")
+            } else {
+                None
+            }
+        }
+    }
+}
+
 /// Check if a URL is safe to fetch (SSRF protection)
 fn is_safe_url(url_str: &str) -> Result<()> {
     use std::net::IpAddr;
@@ -373,47 +437,25 @@ fn is_safe_url(url_str: &str) -> Result<()> {
         }
     }
 
-    // Try to parse as IP address
+    // Check if host is a direct IP address
     if let Ok(ip) = host.parse::<IpAddr>() {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
+        if let Some(reason) = is_private_ip(&ip) {
+            return Err(anyhow::anyhow!("Access to {} is not allowed", reason));
+        }
+    }
 
-                // Block private IPv4 ranges
-                // 10.0.0.0/8
-                if octets[0] == 10 {
-                    return Err(anyhow::anyhow!("Access to private IP ranges (10.x.x.x) is not allowed"));
-                }
-                // 172.16.0.0/12
-                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                    return Err(anyhow::anyhow!("Access to private IP ranges (172.16-31.x.x) is not allowed"));
-                }
-                // 192.168.0.0/16
-                if octets[0] == 192 && octets[1] == 168 {
-                    return Err(anyhow::anyhow!("Access to private IP ranges (192.168.x.x) is not allowed"));
-                }
-                // 169.254.0.0/16 (link-local)
-                if octets[0] == 169 && octets[1] == 254 {
-                    return Err(anyhow::anyhow!("Access to link-local addresses (169.254.x.x) is not allowed"));
-                }
-                // 127.0.0.0/8 (loopback)
-                if octets[0] == 127 {
-                    return Err(anyhow::anyhow!("Access to loopback addresses is not allowed"));
-                }
-            }
-            IpAddr::V6(ipv6) => {
-                // Block IPv6 loopback (::1)
-                if ipv6.is_loopback() {
-                    return Err(anyhow::anyhow!("Access to IPv6 loopback is not allowed"));
-                }
-                // Block IPv6 link-local (fe80::/10)
-                if ipv6.segments()[0] & 0xffc0 == 0xfe80 {
-                    return Err(anyhow::anyhow!("Access to IPv6 link-local addresses is not allowed"));
-                }
-                // Block IPv6 unique local (fc00::/7)
-                if ipv6.segments()[0] & 0xfe00 == 0xfc00 {
-                    return Err(anyhow::anyhow!("Access to IPv6 unique local addresses is not allowed"));
-                }
+    // DNS rebinding mitigation: resolve the hostname and validate all resolved IPs.
+    // This prevents attacks where a domain first resolves to a public IP (passing the
+    // hostname check above) then resolves to 127.0.0.1 when the actual request is made.
+    let port = url.port_or_known_default().unwrap_or(80);
+    let resolve_target = format!("{}:{}", host, port);
+    if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&resolve_target) {
+        for addr in addrs {
+            if let Some(reason) = is_private_ip(&addr.ip()) {
+                warn!("DNS rebinding detected: {} resolved to {} ({})", host, addr.ip(), reason);
+                return Err(anyhow::anyhow!(
+                    "Access denied: hostname '{}' resolved to {} ({})", host, addr.ip(), reason
+                ));
             }
         }
     }

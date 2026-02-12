@@ -80,6 +80,30 @@ impl ToolHandler for WriteCodeTool {
             return Err(anyhow::anyhow!("Task description too long ({} chars, max 50,000)", task.len()));
         }
 
+        // Validate workspace path to prevent operations in arbitrary directories
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        let expanded_workspace = if workspace.starts_with("~/") {
+            home_dir.join(&workspace[2..])
+        } else {
+            std::path::PathBuf::from(workspace)
+        };
+        let canonical_workspace = expanded_workspace.canonicalize()
+            .with_context(|| format!("Workspace path does not exist: {}", workspace))?;
+        let default_ws = if self.config.default_workspace.starts_with("~/") {
+            home_dir.join(&self.config.default_workspace[2..])
+        } else {
+            std::path::PathBuf::from(&self.config.default_workspace)
+        };
+        let canonical_allowed = default_ws.canonicalize().unwrap_or(default_ws);
+
+        if !canonical_workspace.starts_with(&canonical_allowed) && !canonical_workspace.starts_with(&home_dir) {
+            return Err(anyhow::anyhow!(
+                "Workspace '{}' is outside allowed directories. Must be within home directory or configured workspace.",
+                canonical_workspace.display()
+            ));
+        }
+
         debug!("Executing code task in workspace: {}", workspace);
 
         let output = tokio::time::timeout(

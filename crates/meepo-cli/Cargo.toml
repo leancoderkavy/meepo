@@ -27,3 +27,4 @@ chrono = { workspace = true }
 dirs = { workspace = true }
 uuid = { workspace = true }
 rusqlite = { workspace = true }
+cron = { workspace = true }

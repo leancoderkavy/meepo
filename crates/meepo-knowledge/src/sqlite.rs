@@ -127,6 +127,11 @@ impl KnowledgeDb {
 
         info!("Initializing knowledge database at {:?}", path.as_ref());
 
+        // Security note: The knowledge database stores conversation history, entities,
+        // goals, and action logs in plaintext. Consider using SQLCipher for encryption
+        // if the host machine is shared or the data is sensitive.
+        warn!("Knowledge database is NOT encrypted. Conversation history and agent data are stored in plaintext at {:?}", path.as_ref());
+
         // Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON", [])?;
 

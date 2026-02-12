@@ -73,7 +73,7 @@ pub fn parse_skill(content: &str) -> Result<SkillDefinition> {
     let yaml_str = &rest[..end];
     let instructions = rest[end + 4..].trim().to_string();
 
-    let frontmatter: SkillFrontmatter = serde_yaml::from_str(yaml_str)
+    let frontmatter: SkillFrontmatter = serde_yml::from_str(yaml_str)
         .with_context(|| format!("Failed to parse YAML frontmatter"))?;
 
     if frontmatter.name.is_empty() {
@@ -81,7 +81,7 @@ pub fn parse_skill(content: &str) -> Result<SkillDefinition> {
     }
 
     // Validate name is a valid identifier
-    if !frontmatter.name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !frontmatter.name.chars().all(|c: char| c.is_alphanumeric() || c == '_' || c == '-') {
         return Err(anyhow!("Skill name must be alphanumeric (with _ or -)"));
     }
 

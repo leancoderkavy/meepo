@@ -19,6 +19,55 @@ fn sanitize_applescript_string(input: &str) -> String {
         .collect()
 }
 
+/// Validate screenshot output path to prevent writing to sensitive locations
+fn validate_screenshot_path(path: &str) -> Result<()> {
+    if path.contains("..") {
+        return Err(anyhow::anyhow!("Screenshot path contains '..' which is not allowed"));
+    }
+
+    let path_buf = std::path::PathBuf::from(path);
+
+    // Resolve parent directory to check location
+    let check_path = if let Some(parent) = path_buf.parent() {
+        if parent.as_os_str().is_empty() || !parent.exists() {
+            path_buf.clone()
+        } else {
+            parent.canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf())
+                .join(path_buf.file_name().unwrap_or_default())
+        }
+    } else {
+        path_buf.clone()
+    };
+
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir());
+
+    let is_in_home = check_path.starts_with(&home_dir);
+    let is_in_temp = check_path.starts_with(&temp_dir);
+
+    if !is_in_home && !is_in_temp {
+        return Err(anyhow::anyhow!(
+            "Screenshot path '{}' must be within home or temp directory", path
+        ));
+    }
+
+    // Block system directories even if under home
+    let system_dirs = ["/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/System", "/Library"];
+    for sys_dir in &system_dirs {
+        if check_path.starts_with(sys_dir) {
+            return Err(anyhow::anyhow!(
+                "Screenshot path cannot target system directory '{}'", sys_dir
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Run an AppleScript with 30 second timeout
 async fn run_applescript(script: &str) -> Result<String> {
     let output = tokio::time::timeout(
@@ -450,6 +499,9 @@ impl ScreenCaptureProvider for MacOsScreenCaptureProvider {
         let output_path = path
             .map(|p| p.to_string())
             .unwrap_or_else(|| format!("/tmp/meepo-screenshot-{}.png", timestamp));
+
+        // Validate output path to prevent writing to sensitive locations
+        validate_screenshot_path(&output_path)?;
 
         debug!("Capturing screen to {}", output_path);
         let output = tokio::time::timeout(

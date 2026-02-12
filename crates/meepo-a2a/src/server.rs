@@ -8,11 +8,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::num::NonZeroUsize;
 use anyhow::Result;
 use chrono::Utc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
+use lru::LruCache;
 
 use meepo_core::agent::Agent;
 use meepo_core::tools::ToolRegistry;
@@ -20,12 +22,18 @@ use meepo_core::types::{ChannelType, IncomingMessage};
 
 use crate::protocol::*;
 
+/// Maximum request body size (1MB) to prevent OOM DoS
+const MAX_REQUEST_BODY_SIZE: usize = 1_048_576;
+
+/// Maximum number of tasks to keep in memory (LRU eviction for completed tasks)
+const MAX_TASK_HISTORY: usize = 1000;
+
 /// A2A server state
 pub struct A2aServer {
     agent: Arc<Agent>,
     card: AgentCard,
     auth_token: Option<String>,
-    tasks: Arc<Mutex<HashMap<String, TaskResponse>>>,
+    tasks: Arc<Mutex<LruCache<String, TaskResponse>>>,
 }
 
 impl A2aServer {
@@ -40,7 +48,9 @@ impl A2aServer {
             agent,
             card,
             auth_token,
-            tasks: Arc::new(Mutex::new(HashMap::new())),
+            tasks: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(MAX_TASK_HISTORY).unwrap(),
+            ))),
         }
     }
 
@@ -87,6 +97,14 @@ impl A2aServer {
                     }
                 }
 
+                // Enforce max request body size to prevent OOM (check BEFORE allocation)
+                if content_length > MAX_REQUEST_BODY_SIZE {
+                    warn!("A2A request body too large: {} bytes (max {})", content_length, MAX_REQUEST_BODY_SIZE);
+                    let resp = "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\n\r\n{\"error\":\"request body too large\"}";
+                    let _ = writer.write_all(resp.as_bytes()).await;
+                    return;
+                }
+
                 // Read body
                 let mut body = vec![0u8; content_length];
                 if content_length > 0 {
@@ -96,10 +114,20 @@ impl A2aServer {
                     }
                 }
 
-                // Check auth
+                // Check auth (constant-time comparison to prevent timing attacks)
                 if let Some(ref expected_token) = server.auth_token {
                     let auth = headers.get("authorization").cloned().unwrap_or_default();
-                    if !auth.starts_with("Bearer ") || &auth[7..] != expected_token.as_str() {
+                    let is_valid = if auth.starts_with("Bearer ") {
+                        let provided = auth[7..].as_bytes();
+                        let expected = expected_token.as_bytes();
+                        // Constant-time comparison: always compare all bytes
+                        provided.len() == expected.len()
+                            && provided.iter().zip(expected.iter())
+                                .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+                    } else {
+                        false
+                    };
+                    if !is_valid {
                         let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"unauthorized\"}";
                         let _ = writer.write_all(resp.as_bytes()).await;
                         return;
@@ -168,12 +196,15 @@ impl A2aServer {
         {
             let mut tasks = self.tasks.lock().await;
 
-            // Rate limit: max 100 concurrent tasks
-            if tasks.len() >= 100 {
+            // Rate limit: max 100 concurrent (non-completed) tasks
+            let active_count = tasks.iter()
+                .filter(|(_, t)| t.status == TaskStatus::Submitted || t.status == TaskStatus::Working)
+                .count();
+            if active_count >= 100 {
                 return ("429 Too Many Requests", r#"{"error":"too many concurrent tasks"}"#.to_string());
             }
 
-            tasks.insert(task_id.clone(), response.clone());
+            tasks.put(task_id.clone(), response.clone());
         }
 
         // Spawn background task execution
@@ -223,7 +254,7 @@ impl A2aServer {
     }
 
     async fn handle_get_task(&self, task_id: &str) -> (&'static str, String) {
-        let tasks = self.tasks.lock().await;
+        let mut tasks = self.tasks.lock().await;
         match tasks.get(task_id) {
             Some(task) => {
                 let json = serde_json::to_string(task).unwrap();

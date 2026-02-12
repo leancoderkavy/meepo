@@ -58,7 +58,7 @@ impl Watcher {
             WatcherKind::CalendarWatch { lookahead_hours, interval_secs } => {
                 format!("Calendar watcher ({}h lookahead, every {}s)", lookahead_hours, interval_secs)
             }
-            WatcherKind::GitHubWatch { repo, events, interval_secs } => {
+            WatcherKind::GitHubWatch { repo, events, interval_secs, .. } => {
                 format!("GitHub watcher for {} (events: {:?}, every {}s)", repo, events, interval_secs)
             }
             WatcherKind::FileWatch { path } => {
@@ -112,6 +112,10 @@ pub enum WatcherKind {
 
         /// How often to poll GitHub API (in seconds)
         interval_secs: u64,
+
+        /// Optional GitHub token for authenticated API calls (higher rate limits, private repos)
+        #[serde(default)]
+        github_token: Option<String>,
     },
 
     /// Watch filesystem for changes

@@ -219,12 +219,16 @@ impl IMessageChannel {
         Ok(())
     }
 
-    /// Escape quotes in AppleScript strings
+    /// Sanitize a string for safe use in AppleScript.
+    /// Escapes special characters and strips control characters to prevent injection.
     fn escape_applescript(s: &str) -> String {
         s.replace('\\', "\\\\")
             .replace('"', "\\\"")
             .replace('\n', "\\n")
             .replace('\r', "\\r")
+            .chars()
+            .filter(|&c| c >= ' ' || c == '\t')
+            .collect()
     }
 
     /// Send a message via AppleScript

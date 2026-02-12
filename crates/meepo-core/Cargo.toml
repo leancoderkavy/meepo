@@ -22,7 +22,7 @@ glob = { workspace = true }
 arboard = { workspace = true }
 open = { workspace = true }
 tokio-util = { workspace = true }
-serde_yaml = { workspace = true }
+serde_yml = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

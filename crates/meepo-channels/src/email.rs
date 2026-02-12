@@ -44,12 +44,16 @@ impl EmailChannel {
         }
     }
 
-    /// Escape a string for use in AppleScript
+    /// Sanitize a string for safe use in AppleScript.
+    /// Escapes special characters and strips control characters to prevent injection.
     fn escape_applescript(s: &str) -> String {
         s.replace('\\', "\\\\")
             .replace('"', "\\\"")
             .replace('\n', "\\n")
             .replace('\r', "\\r")
+            .chars()
+            .filter(|&c| c >= ' ' || c == '\t')
+            .collect()
     }
 
     /// Poll Mail.app for unread emails matching the subject prefix

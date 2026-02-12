@@ -756,7 +756,7 @@ end tell
                 }
             }
         }
-        WatcherKind::GitHubWatch { repo, events, .. } => {
+        WatcherKind::GitHubWatch { repo, events, github_token, .. } => {
             debug!(
                 "Polling GitHub watcher {} (repo: {}, events: {:?})",
                 watcher.id, repo, events
@@ -768,7 +768,11 @@ end tell
                 .timeout(Duration::from_secs(30))
                 .build()?;
 
-            let response = client.get(&url).send().await?;
+            let mut request = client.get(&url);
+            if let Some(token) = github_token {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            }
+            let response = request.send().await?;
 
             if !response.status().is_success() {
                 warn!(

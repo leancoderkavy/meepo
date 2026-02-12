@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{info, error, debug};
 
 use crate::agent::Agent;
+use crate::notifications::{NotificationService, NotifyEvent};
 use crate::types::{IncomingMessage, MessageKind, OutgoingMessage, ChannelType};
 use meepo_knowledge::KnowledgeDb;
 use meepo_scheduler::WatcherEvent;
@@ -51,6 +52,9 @@ pub struct AutonomousLoop {
     /// Sends responses back to channels
     response_tx: mpsc::Sender<OutgoingMessage>,
 
+    /// Proactive notification service (iMessage alerts, etc.)
+    notifier: NotificationService,
+
     /// Notified when a new input arrives (to wake the loop immediately)
     wake: Arc<Notify>,
 }
@@ -63,6 +67,7 @@ impl AutonomousLoop {
         message_rx: mpsc::Receiver<IncomingMessage>,
         watcher_rx: mpsc::UnboundedReceiver<WatcherEvent>,
         response_tx: mpsc::Sender<OutgoingMessage>,
+        notifier: NotificationService,
         wake: Arc<Notify>,
     ) -> Self {
         Self {
@@ -72,6 +77,7 @@ impl AutonomousLoop {
             message_rx,
             watcher_rx,
             response_tx,
+            notifier,
             wake,
         }
     }
@@ -170,7 +176,8 @@ impl AutonomousLoop {
     /// Handle a user message through the existing agent path
     async fn handle_user_message(&self, msg: IncomingMessage) {
         let channel = msg.channel.clone();
-        info!("Processing user message from {} on {}", msg.sender, channel);
+        let sender = msg.sender.clone();
+        info!("Processing user message from {} on {}", sender, channel);
 
         // Send acknowledgment so the user knows we're working on it
         if self.config.send_acknowledgments {
@@ -189,7 +196,13 @@ impl AutonomousLoop {
                     error!("Failed to send response: {}", e);
                 }
             }
-            Err(e) => error!("Agent error: {}", e),
+            Err(e) => {
+                error!("Agent error: {}", e);
+                self.notifier.notify(NotifyEvent::Error {
+                    context: format!("Processing message from {} on {}", sender, channel),
+                    error: e.to_string(),
+                }).await;
+            }
         }
     }
 
@@ -197,6 +210,13 @@ impl AutonomousLoop {
     /// then route the agent's response to the correct channel.
     async fn handle_watcher_event(&self, event: WatcherEvent) {
         info!("Processing watcher event: {} from {}", event.kind, event.watcher_id);
+
+        // Notify user that a watcher triggered
+        self.notifier.notify(NotifyEvent::WatcherTriggered {
+            watcher_id: event.watcher_id.clone(),
+            kind: event.kind.clone(),
+            payload: event.payload.to_string(),
+        }).await;
 
         // Look up the watcher to get reply_channel and action
         let (reply_channel, action) = match self.db.get_watcher(&event.watcher_id).await {
@@ -240,7 +260,13 @@ impl AutonomousLoop {
                     error!("Failed to send watcher response: {}", e);
                 }
             }
-            Err(e) => error!("Failed to handle watcher event: {}", e),
+            Err(e) => {
+                error!("Failed to handle watcher event: {}", e);
+                self.notifier.notify(NotifyEvent::Error {
+                    context: format!("Handling watcher event {} from {}", event.kind, event.watcher_id),
+                    error: e.to_string(),
+                }).await;
+            }
         }
     }
 }
@@ -249,6 +275,7 @@ impl AutonomousLoop {
 mod tests {
     use super::*;
     use crate::api::ApiClient;
+    use crate::notifications::NotifyConfig;
     use crate::tools::ToolRegistry;
     use tempfile::TempDir;
 
@@ -269,11 +296,12 @@ mod tests {
         let (_, watcher_rx) = mpsc::unbounded_channel();
         let (resp_tx, _) = mpsc::channel(16);
         let wake = AutonomousLoop::create_wake_handle();
+        let notifier = NotificationService::disabled(resp_tx.clone());
 
         let mut loop_ = AutonomousLoop::new(
             agent, db,
             AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50, send_acknowledgments: true },
-            msg_rx, watcher_rx, resp_tx, wake,
+            msg_rx, watcher_rx, resp_tx, notifier, wake,
         );
 
         let inputs = loop_.drain_inputs();
@@ -287,6 +315,7 @@ mod tests {
         let (_, watcher_rx) = mpsc::unbounded_channel();
         let (resp_tx, _) = mpsc::channel(16);
         let wake = AutonomousLoop::create_wake_handle();
+        let notifier = NotificationService::disabled(resp_tx.clone());
 
         // Send a message before creating the loop
         msg_tx.send(IncomingMessage {
@@ -300,7 +329,7 @@ mod tests {
         let mut loop_ = AutonomousLoop::new(
             agent, db,
             AutonomyConfig { enabled: true, tick_interval_secs: 30, max_goals: 50, send_acknowledgments: true },
-            msg_rx, watcher_rx, resp_tx, wake,
+            msg_rx, watcher_rx, resp_tx, notifier, wake,
         );
 
         let inputs = loop_.drain_inputs();

@@ -26,6 +26,8 @@ pub struct MeepoConfig {
     pub skills: SkillsConfig,
     #[serde(default)]
     pub browser: BrowserConfig,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,21 +55,38 @@ pub struct ProvidersConfig {
     pub tavily: Option<TavilyConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AnthropicConfig {
     pub api_key: String,
     #[serde(default = "default_base_url")]
     pub base_url: String,
 }
 
+impl std::fmt::Debug for AnthropicConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnthropicConfig")
+            .field("api_key", &mask_secret(&self.api_key))
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
 fn default_base_url() -> String {
     "https://api.anthropic.com".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TavilyConfig {
     #[serde(default)]
     pub api_key: String,
+}
+
+impl std::fmt::Debug for TavilyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TavilyConfig")
+            .field("api_key", &mask_secret(&self.api_key))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +98,7 @@ pub struct ChannelsConfig {
     pub email: EmailConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiscordConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -89,7 +108,17 @@ pub struct DiscordConfig {
     pub allowed_users: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for DiscordConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiscordConfig")
+            .field("enabled", &self.enabled)
+            .field("token", &mask_secret(&self.token))
+            .field("allowed_users", &self.allowed_users)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SlackConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -97,6 +126,16 @@ pub struct SlackConfig {
     pub bot_token: String,
     #[serde(default = "default_slack_poll_interval")]
     pub poll_interval_secs: u64,
+}
+
+impl std::fmt::Debug for SlackConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlackConfig")
+            .field("enabled", &self.enabled)
+            .field("bot_token", &mask_secret(&self.bot_token))
+            .field("poll_interval_secs", &self.poll_interval_secs)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,7 +376,7 @@ pub struct McpClientEntry {
 
 // ── A2A Config ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct A2aConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -349,6 +388,18 @@ pub struct A2aConfig {
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     pub agents: Vec<A2aAgentEntry>,
+}
+
+impl std::fmt::Debug for A2aConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("A2aConfig")
+            .field("enabled", &self.enabled)
+            .field("port", &self.port)
+            .field("auth_token", &mask_secret(&self.auth_token))
+            .field("allowed_tools", &self.allowed_tools)
+            .field("agents", &self.agents)
+            .finish()
+    }
 }
 
 fn default_a2a_port() -> u16 { 8081 }
@@ -365,12 +416,22 @@ impl Default for A2aConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct A2aAgentEntry {
     pub name: String,
     pub url: String,
     #[serde(default)]
     pub token: String,
+}
+
+impl std::fmt::Debug for A2aAgentEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("A2aAgentEntry")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("token", &mask_secret(&self.token))
+            .finish()
+    }
 }
 
 // ── Skills Config ───────────────────────────────────────────────
@@ -416,6 +477,104 @@ impl Default for BrowserConfig {
     }
 }
 
+// ── Notifications Config ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Channel to send notifications to (e.g., "imessage", "discord", "slack")
+    #[serde(default = "default_notify_channel")]
+    pub channel: String,
+    /// Notify when a background task starts
+    #[serde(default = "default_true")]
+    pub on_task_start: bool,
+    /// Notify when a background task completes
+    #[serde(default = "default_true")]
+    pub on_task_complete: bool,
+    /// Notify when a background task fails
+    #[serde(default = "default_true")]
+    pub on_task_fail: bool,
+    /// Notify when a watcher triggers and the agent takes action
+    #[serde(default = "default_true")]
+    pub on_watcher_triggered: bool,
+    /// Notify when the agent takes an autonomous/proactive action (goal evaluation, etc.)
+    #[serde(default = "default_true")]
+    pub on_autonomous_action: bool,
+    /// Notify on errors (agent failures, channel errors, etc.)
+    #[serde(default = "default_true")]
+    pub on_error: bool,
+    /// Daily digest configuration
+    #[serde(default)]
+    pub digest: DigestConfig,
+    /// Quiet hours — suppress notifications during this window (except errors)
+    #[serde(default)]
+    pub quiet_hours: Option<QuietHoursConfig>,
+}
+
+fn default_notify_channel() -> String { "imessage".to_string() }
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            channel: default_notify_channel(),
+            on_task_start: true,
+            on_task_complete: true,
+            on_task_fail: true,
+            on_watcher_triggered: true,
+            on_autonomous_action: true,
+            on_error: true,
+            digest: DigestConfig::default(),
+            quiet_hours: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DigestConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Cron expression for morning briefing (default: 9am daily)
+    #[serde(default = "default_morning_cron")]
+    pub morning_cron: String,
+    /// Cron expression for end-of-day recap (default: 6pm daily)
+    #[serde(default = "default_evening_cron")]
+    pub evening_cron: String,
+}
+
+fn default_morning_cron() -> String { "0 9 * * *".to_string() }
+fn default_evening_cron() -> String { "0 18 * * *".to_string() }
+
+impl Default for DigestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            morning_cron: default_morning_cron(),
+            evening_cron: default_evening_cron(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuietHoursConfig {
+    pub start: String,
+    pub end: String,
+}
+
+/// Mask a secret string for safe display in Debug output / logs.
+/// Shows first 3 and last 4 chars for keys longer than 7 chars, otherwise "***".
+fn mask_secret(s: &str) -> String {
+    if s.is_empty() {
+        return "(empty)".to_string();
+    }
+    if s.len() > 7 {
+        format!("{}...{}", &s[..3], &s[s.len()-4..])
+    } else {
+        "***".to_string()
+    }
+}
+
 pub fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -427,6 +586,23 @@ impl MeepoConfig {
         let path = custom_path
             .clone()
             .unwrap_or_else(|| config_dir().join("config.toml"));
+
+        // Check config file permissions (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let mode = metadata.permissions().mode();
+                // Warn if group or other can read (mode & 0o077 != 0)
+                if mode & 0o077 != 0 {
+                    warn!(
+                        "Config file {:?} has overly permissive permissions ({:o}). \
+                         It may contain secrets — consider running: chmod 600 {:?}",
+                        path, mode & 0o777, path
+                    );
+                }
+            }
+        }
 
         let content = std::fs::read_to_string(&path)
             .with_context(|| {
@@ -459,6 +635,20 @@ impl MeepoConfig {
     }
 }
 
+/// Allowlist of environment variable names that may be expanded in config files.
+/// This prevents an attacker who can modify the config from reading arbitrary env vars.
+const ALLOWED_ENV_VARS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "TAVILY_API_KEY",
+    "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "A2A_AUTH_TOKEN",
+    "OPENCLAW_A2A_TOKEN",
+    "GITHUB_TOKEN",
+    "HOME",
+    "USER",
+];
+
 fn expand_env_vars(s: &str) -> String {
     let mut result = s.to_string();
     let mut pos = 0;
@@ -467,7 +657,17 @@ fn expand_env_vars(s: &str) -> String {
             let abs_start = pos + start;
             if let Some(end) = result[abs_start..].find('}') {
                 let var_name = result[abs_start + 2..abs_start + end].to_string();
-                let value = std::env::var(&var_name).unwrap_or_default();
+
+                // Only expand variables in the allowlist
+                let value = if ALLOWED_ENV_VARS.contains(&var_name.as_str()) {
+                    std::env::var(&var_name).unwrap_or_default()
+                } else {
+                    warn!("Skipping expansion of unrecognized env var '{}' in config (not in allowlist)", var_name);
+                    // Leave the ${VAR} unexpanded so it's obvious
+                    pos = abs_start + end + 1;
+                    continue;
+                };
+
                 let value_len = value.len();
                 result = format!("{}{}{}", &result[..abs_start], value, &result[abs_start + end + 1..]);
                 pos = abs_start + value_len; // Skip past the expanded value

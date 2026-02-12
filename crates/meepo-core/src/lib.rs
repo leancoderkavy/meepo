@@ -11,6 +11,7 @@ pub mod agent;
 pub mod api;
 pub mod autonomy;
 pub mod context;
+pub mod notifications;
 pub mod orchestrator;
 pub mod platform;
 pub mod skills;
@@ -28,6 +29,7 @@ pub use orchestrator::{
     SubTask, SubTaskResult, SubTaskStatus, TaskGroup, TaskOrchestrator,
 };
 pub use tools::{ToolExecutor, ToolHandler, ToolRegistry};
+pub use notifications::{NotificationService, NotifyConfig, NotifyEvent};
 pub use types::{ChannelType, IncomingMessage, MessageKind, OutgoingMessage};
 
 #[cfg(test)]

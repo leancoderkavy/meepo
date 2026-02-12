@@ -732,6 +732,28 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         }
     });
 
+    // Build notification service from config (needed by bg task handler and autonomous loop)
+    let notifier = {
+        let nc = &cfg.notifications;
+        let quiet_hours = nc.quiet_hours.as_ref().and_then(|qh| {
+            let start = chrono::NaiveTime::parse_from_str(&qh.start, "%H:%M").ok()?;
+            let end = chrono::NaiveTime::parse_from_str(&qh.end, "%H:%M").ok()?;
+            Some((start, end))
+        });
+        let notify_config = meepo_core::notifications::NotifyConfig {
+            enabled: nc.enabled,
+            channel: meepo_core::types::ChannelType::from_string(&nc.channel),
+            on_task_start: nc.on_task_start,
+            on_task_complete: nc.on_task_complete,
+            on_task_fail: nc.on_task_fail,
+            on_watcher_triggered: nc.on_watcher_triggered,
+            on_autonomous_action: nc.on_autonomous_action,
+            on_error: nc.on_error,
+            quiet_hours,
+        };
+        meepo_core::notifications::NotificationService::new(notify_config, loop_resp_tx.clone())
+    };
+
     // Clone bus_sender for background task handler before it moves into resp_to_bus
     let bus_sender_for_bg = bus_sender.clone();
 
@@ -846,6 +868,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     let cancel_clone_bg = cancel.clone();
     let agent_bg = agent.clone();
     let db_bg = db.clone();
+    let notifier_bg = notifier.clone();
     let bus_sender_bg = bus_sender_for_bg;
     let code_config_bg = meepo_core::tools::code::CodeToolConfig {
         claude_code_path: shellexpand_str(&cfg.code.claude_code_path),
@@ -871,11 +894,18 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                             let agent = agent_bg.clone();
                             let db = db_bg.clone();
                             let bus = bus_sender_bg.clone();
+                            let notifier = notifier_bg.clone();
                             let task_cancels = task_cancels.clone();
                             let id_clone = id.clone();
                             let reply_channel_clone = reply_channel.clone();
 
                             tokio::spawn(async move {
+                                // Notify user that task is starting
+                                notifier.notify(meepo_core::notifications::NotifyEvent::TaskStarted {
+                                    task_id: id_clone.clone(),
+                                    description: description.clone(),
+                                }).await;
+
                                 // Update status to running
                                 if let Err(e) = db.update_background_task(&id_clone, "running", None).await {
                                     error!("Failed to update task {} to running: {}", id_clone, e);
@@ -902,7 +932,13 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                         if let Err(e) = db.update_background_task(&id_clone, "completed", Some(&response.content)).await {
                                             error!("Failed to update task {} to completed: {}", id_clone, e);
                                         }
-                                        // Notify user on reply_channel
+                                        // Notify user via proactive notification
+                                        notifier.notify(meepo_core::notifications::NotifyEvent::TaskCompleted {
+                                            task_id: id_clone.clone(),
+                                            description: description.clone(),
+                                            result_preview: response.content[..response.content.len().min(500)].to_string(),
+                                        }).await;
+                                        // Also send to reply_channel
                                         let notify_msg = meepo_core::types::OutgoingMessage {
                                             content: format!("Background task [{}] completed:\n{}", id_clone, response.content),
                                             channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
@@ -918,6 +954,11 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                             error!("Failed to update task {} to {}: {}", id_clone, status, e);
                                         }
                                         if status == "failed" {
+                                            notifier.notify(meepo_core::notifications::NotifyEvent::TaskFailed {
+                                                task_id: id_clone.clone(),
+                                                description: description.clone(),
+                                                error: err_msg.clone(),
+                                            }).await;
                                             let notify_msg = meepo_core::types::OutgoingMessage {
                                                 content: format!("Background task [{}] failed: {}", id_clone, err_msg),
                                                 channel: meepo_core::types::ChannelType::from_string(&reply_channel_clone),
@@ -940,10 +981,17 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
 
                             let db = db_bg.clone();
                             let bus = bus_sender_bg.clone();
+                            let notifier = notifier_bg.clone();
                             let task_cancels = task_cancels.clone();
                             let claude_path = code_config_bg.claude_code_path.clone();
 
                             tokio::spawn(async move {
+                                // Notify user that task is starting
+                                notifier.notify(meepo_core::notifications::NotifyEvent::TaskStarted {
+                                    task_id: id.clone(),
+                                    description: format!("Claude Code: {}", &task),
+                                }).await;
+
                                 // Update status to running
                                 if let Err(e) = db.update_background_task(&id, "running", None).await {
                                     error!("Failed to update task {} to running: {}", id, e);
@@ -964,6 +1012,11 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                         let err_msg = format!("Failed to spawn Claude Code CLI: {}", e);
                                         error!("{}", err_msg);
                                         let _ = db.update_background_task(&id, "failed", Some(&err_msg)).await;
+                                        notifier.notify(meepo_core::notifications::NotifyEvent::TaskFailed {
+                                            task_id: id.clone(),
+                                            description: format!("Claude Code: {}", &task),
+                                            error: err_msg.clone(),
+                                        }).await;
                                         let notify = meepo_core::types::OutgoingMessage {
                                             content: format!("Claude Code task [{}] failed: {}", id, err_msg),
                                             channel: meepo_core::types::ChannelType::from_string(&reply_channel),
@@ -1019,6 +1072,11 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                         if let Err(e) = db.update_background_task(&id, "completed", Some(&output)).await {
                                             error!("Failed to update task {} to completed: {}", id, e);
                                         }
+                                        notifier.notify(meepo_core::notifications::NotifyEvent::TaskCompleted {
+                                            task_id: id.clone(),
+                                            description: format!("Claude Code: {}", &task),
+                                            result_preview: output[..output.len().min(500)].to_string(),
+                                        }).await;
                                         let notify = meepo_core::types::OutgoingMessage {
                                             content: format!("Claude Code task [{}] completed:\n{}", id, output),
                                             channel: meepo_core::types::ChannelType::from_string(&reply_channel),
@@ -1034,6 +1092,11 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
                                             error!("Failed to update task {} to {}: {}", id, status, e);
                                         }
                                         if status == "failed" {
+                                            notifier.notify(meepo_core::notifications::NotifyEvent::TaskFailed {
+                                                task_id: id.clone(),
+                                                description: format!("Claude Code: {}", &task),
+                                                error: err_msg.clone(),
+                                            }).await;
                                             let notify = meepo_core::types::OutgoingMessage {
                                                 content: format!("Claude Code task [{}] failed: {}", id, err_msg),
                                                 channel: meepo_core::types::ChannelType::from_string(&reply_channel),
@@ -1093,6 +1156,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         loop_msg_rx,
         loop_watcher_rx,
         loop_resp_tx,
+        notifier.clone(),
         wake,
     );
 
@@ -1100,6 +1164,91 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     let loop_task = tokio::spawn(async move {
         auto_loop.run(cancel_clone6).await;
     });
+
+    // ── Daily Digest Runner ─────────────────────────────────────
+    let digest_task = if cfg.notifications.enabled && cfg.notifications.digest.enabled {
+        let cancel_digest = cancel.clone();
+        let notifier_digest = notifier.clone();
+        let db_digest = db.clone();
+        let morning_cron = cfg.notifications.digest.morning_cron.clone();
+        let evening_cron = cfg.notifications.digest.evening_cron.clone();
+
+        Some(tokio::spawn(async move {
+            use std::str::FromStr;
+            use tracing::debug;
+
+            let morning_schedule = match cron::Schedule::from_str(&format!("0 {}", morning_cron)) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    error!("Invalid morning digest cron '{}': {}", morning_cron, e);
+                    None
+                }
+            };
+            let evening_schedule = match cron::Schedule::from_str(&format!("0 {}", evening_cron)) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    error!("Invalid evening digest cron '{}': {}", evening_cron, e);
+                    None
+                }
+            };
+
+            if morning_schedule.is_none() && evening_schedule.is_none() {
+                warn!("No valid digest schedules — digest runner exiting");
+                return;
+            }
+
+            info!("Digest runner started (morning: {}, evening: {})", morning_cron, evening_cron);
+
+            loop {
+                // Find the next digest time
+                let now = chrono::Utc::now();
+                let next_morning = morning_schedule.as_ref().and_then(|s| s.after(&now).next());
+                let next_evening = evening_schedule.as_ref().and_then(|s| s.after(&now).next());
+
+                let (next_time, is_morning) = match (next_morning, next_evening) {
+                    (Some(m), Some(e)) => if m < e { (m, true) } else { (e, false) },
+                    (Some(m), None) => (m, true),
+                    (None, Some(e)) => (e, false),
+                    (None, None) => {
+                        error!("No next digest occurrence found");
+                        break;
+                    }
+                };
+
+                let duration = (next_time - now).to_std().unwrap_or(std::time::Duration::from_secs(60));
+                let wake_time = tokio::time::Instant::now() + duration;
+
+                debug!("Next digest at {} ({}, in {:?})",
+                    next_time,
+                    if is_morning { "morning" } else { "evening" },
+                    duration
+                );
+
+                tokio::select! {
+                    _ = cancel_digest.cancelled() => {
+                        info!("Digest runner shutting down");
+                        break;
+                    }
+                    _ = tokio::time::sleep_until(wake_time) => {
+                        // Build digest summary from DB
+                        let summary = build_digest_summary(&db_digest, is_morning).await;
+
+                        if is_morning {
+                            notifier_digest.notify(meepo_core::notifications::NotifyEvent::DigestMorning {
+                                summary,
+                            }).await;
+                        } else {
+                            notifier_digest.notify(meepo_core::notifications::NotifyEvent::DigestEvening {
+                                summary,
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
 
     // ── Phase 3: A2A Server ─────────────────────────────────────
     if cfg.a2a.enabled {
@@ -1148,12 +1297,95 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
 
     // Wait for all tasks
     let _ = tokio::join!(loop_task, bus_to_loop, watcher_to_loop, resp_to_bus, watcher_cmd_task, progress_task, bg_task_handler);
+    if let Some(dt) = digest_task {
+        let _ = dt.await;
+    }
 
     // Stop all watchers
     watcher_runner.lock().await.stop_all().await;
 
     println!("Meepo stopped.");
     Ok(())
+}
+
+/// Build a digest summary from the knowledge database
+async fn build_digest_summary(db: &meepo_knowledge::KnowledgeDb, is_morning: bool) -> String {
+    let mut summary = String::new();
+
+    // Active watchers
+    match db.get_active_watchers().await {
+        Ok(watchers) if !watchers.is_empty() => {
+            summary.push_str(&format!("📡 {} active watchers\n", watchers.len()));
+            for w in watchers.iter().take(5) {
+                summary.push_str(&format!("  • {} → {}\n", w.kind, w.action));
+            }
+            if watchers.len() > 5 {
+                summary.push_str(&format!("  ... and {} more\n", watchers.len() - 5));
+            }
+            summary.push('\n');
+        }
+        _ => {}
+    }
+
+    // Running tasks
+    match db.get_active_background_tasks().await {
+        Ok(tasks) if !tasks.is_empty() => {
+            summary.push_str(&format!("⚙️ {} running tasks\n", tasks.len()));
+            for t in tasks.iter().take(5) {
+                summary.push_str(&format!("  • [{}] {}\n", t.id, t.description));
+            }
+            summary.push('\n');
+        }
+        _ => {}
+    }
+
+    // Recently completed tasks (for evening recap)
+    if !is_morning {
+        match db.get_recent_background_tasks(10).await {
+            Ok(tasks) if !tasks.is_empty() => {
+                let completed: Vec<_> = tasks.iter().filter(|t| t.status == "completed").collect();
+                let failed: Vec<_> = tasks.iter().filter(|t| t.status == "failed").collect();
+
+                if !completed.is_empty() {
+                    summary.push_str(&format!("✅ {} tasks completed today\n", completed.len()));
+                    for t in completed.iter().take(5) {
+                        summary.push_str(&format!("  • {}\n", t.description));
+                    }
+                    summary.push('\n');
+                }
+                if !failed.is_empty() {
+                    summary.push_str(&format!("❌ {} tasks failed\n", failed.len()));
+                    for t in failed.iter().take(3) {
+                        summary.push_str(&format!("  • {}\n", t.description));
+                    }
+                    summary.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Active goals
+    match db.get_due_goals().await {
+        Ok(goals) if !goals.is_empty() => {
+            summary.push_str(&format!("🎯 {} goals due\n", goals.len()));
+            for g in goals.iter().take(5) {
+                summary.push_str(&format!("  • {}\n", g.description));
+            }
+            summary.push('\n');
+        }
+        _ => {}
+    }
+
+    if summary.is_empty() {
+        if is_morning {
+            summary = "Nothing scheduled. Quiet day ahead!".to_string();
+        } else {
+            summary = "Quiet day — no tasks or events to report.".to_string();
+        }
+    }
+
+    summary
 }
 
 async fn cmd_stop() -> Result<()> {

@@ -157,6 +157,37 @@ max_tokens_per_tick = 4096    # budget per think phase
 send_acknowledgments = true   # send typing/ack indicators before processing
 
 
+# ── Notifications ───────────────────────────────────────────────
+# Proactive iMessage (or other channel) alerts throughout the day.
+# Meepo will message you when it takes autonomous actions, when
+# watchers trigger, when background tasks complete, and more.
+#
+# Requirements (for iMessage):
+#   - iMessage channel must also be enabled above
+#   - macOS with Messages app signed into iMessage
+
+[notifications]
+enabled = false
+channel = "imessage"                    # "imessage", "discord", "slack", "email"
+on_task_start = true                    # alert when a background task starts
+on_task_complete = true                 # alert when a background task finishes
+on_task_fail = true                     # alert when a background task fails
+on_watcher_triggered = true             # alert when a watcher fires and agent acts
+on_autonomous_action = true             # alert when agent takes proactive action
+on_error = true                         # alert on agent errors
+
+# Quiet hours — suppress all notifications except errors
+# [notifications.quiet_hours]
+# start = "23:00"
+# end = "08:00"
+
+# Daily digest — periodic summary iMessages
+[notifications.digest]
+enabled = false
+morning_cron = "0 9 * * *"             # 9am daily — what's ahead today
+evening_cron = "0 18 * * *"            # 6pm daily — recap of what happened
+
+
 # ── MCP Server ──────────────────────────────────────────────────
 # Expose Meepo's tools via Model Context Protocol.
 # Usage: meepo mcp-server  (STDIO transport for Claude Desktop, Cursor, etc.)

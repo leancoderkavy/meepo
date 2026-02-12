@@ -287,6 +287,32 @@ impl ToolHandler for BrowserExecuteJsTool {
             return Err(anyhow::anyhow!("Script too long ({} chars, max 50,000)", script.len()));
         }
 
+        // Block dangerous JS patterns that could steal credentials or exfiltrate data
+        let script_lower = script.to_lowercase();
+        let blocked_patterns = [
+            ("document.cookie", "accessing cookies"),
+            ("localstorage", "accessing localStorage"),
+            ("sessionstorage", "accessing sessionStorage"),
+            ("indexeddb", "accessing IndexedDB"),
+            ("xmlhttprequest", "making network requests"),
+            (".fetch(", "making network requests"),
+            ("navigator.sendbeacon", "sending beacons"),
+            ("new websocket", "opening WebSocket connections"),
+            ("new eventsource", "opening EventSource connections"),
+            ("importscripts", "importing external scripts"),
+            ("eval(", "dynamic code execution"),
+            ("function(", "dynamic function creation"),
+            ("new function", "dynamic function creation"),
+        ];
+
+        for (pattern, reason) in &blocked_patterns {
+            if script_lower.contains(pattern) {
+                return Err(anyhow::anyhow!(
+                    "Script blocked for security: {} is not allowed ({})", pattern, reason
+                ));
+            }
+        }
+
         debug!("Executing JavaScript in browser tab ({} chars)", script.len());
         self.provider.execute_javascript(tab_id, script).await
     }

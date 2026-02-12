@@ -29,7 +29,8 @@ impl Default for ReadEmailsTool {
 impl ReadEmailsTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_email_provider(),
+            provider: crate::platform::create_email_provider()
+                .expect("Email provider not available on this platform"),
         }
     }
 }
@@ -95,7 +96,8 @@ impl Default for ReadCalendarTool {
 impl ReadCalendarTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_calendar_provider(),
+            provider: crate::platform::create_calendar_provider()
+                .expect("Calendar provider not available on this platform"),
         }
     }
 }
@@ -147,7 +149,8 @@ impl Default for SendEmailTool {
 impl SendEmailTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_email_provider(),
+            provider: crate::platform::create_email_provider()
+                .expect("Email provider not available on this platform"),
         }
     }
 }
@@ -235,7 +238,8 @@ impl Default for CreateEventTool {
 impl CreateEventTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_calendar_provider(),
+            provider: crate::platform::create_calendar_provider()
+                .expect("Calendar provider not available on this platform"),
         }
     }
 }
@@ -404,7 +408,8 @@ impl Default for ListRemindersTool {
 impl ListRemindersTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_reminders_provider(),
+            provider: crate::platform::create_reminders_provider()
+                .expect("Reminders provider not available on this platform"),
         }
     }
 }
@@ -452,7 +457,8 @@ impl Default for CreateReminderTool {
 impl CreateReminderTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_reminders_provider(),
+            provider: crate::platform::create_reminders_provider()
+                .expect("Reminders provider not available on this platform"),
         }
     }
 }
@@ -527,7 +533,8 @@ impl Default for ListNotesTool {
 impl ListNotesTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_notes_provider(),
+            provider: crate::platform::create_notes_provider()
+                .expect("Notes provider not available on this platform"),
         }
     }
 }
@@ -585,7 +592,8 @@ impl Default for CreateNoteTool {
 impl CreateNoteTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_notes_provider(),
+            provider: crate::platform::create_notes_provider()
+                .expect("Notes provider not available on this platform"),
         }
     }
 }
@@ -656,7 +664,8 @@ impl Default for SendNotificationTool {
 impl SendNotificationTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_notification_provider(),
+            provider: crate::platform::create_notification_provider()
+                .expect("Notification provider not available on this platform"),
         }
     }
 }
@@ -728,7 +737,8 @@ impl Default for ScreenCaptureTool {
 impl ScreenCaptureTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_screen_capture_provider(),
+            provider: crate::platform::create_screen_capture_provider()
+                .expect("Screen capture provider not available on this platform"),
         }
     }
 }
@@ -788,7 +798,8 @@ impl Default for GetCurrentTrackTool {
 impl GetCurrentTrackTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_music_provider(),
+            provider: crate::platform::create_music_provider()
+                .expect("Music provider not available on this platform"),
         }
     }
 }
@@ -827,7 +838,8 @@ impl Default for MusicControlTool {
 impl MusicControlTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_music_provider(),
+            provider: crate::platform::create_music_provider()
+                .expect("Music provider not available on this platform"),
         }
     }
 }
@@ -879,7 +891,8 @@ impl Default for SearchContactsTool {
 impl SearchContactsTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_contacts_provider(),
+            provider: crate::platform::create_contacts_provider()
+                .expect("Contacts provider not available on this platform"),
         }
     }
 }

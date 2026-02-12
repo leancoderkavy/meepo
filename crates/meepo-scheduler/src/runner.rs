@@ -576,7 +576,7 @@ async fn poll_watcher(
             {
                 let _ = (from, subject_contains, event_tx, state);
                 warn!(
-                    "Email watcher {} skipped — AppleScript polling is macOS-only",
+                    "Email watcher {} skipped — email watcher polling is macOS-only (use read_emails tool on Windows instead)",
                     watcher.id
                 );
                 return Ok(());
@@ -699,7 +699,7 @@ end tell
             {
                 let _ = (lookahead_hours, event_tx, state);
                 warn!(
-                    "Calendar watcher {} skipped — AppleScript polling is macOS-only",
+                    "Calendar watcher {} skipped — calendar watcher polling is macOS-only (use read_calendar tool on Windows instead)",
                     watcher.id
                 );
                 return Ok(());

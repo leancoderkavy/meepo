@@ -57,7 +57,8 @@ impl Default for ReadScreenTool {
 impl ReadScreenTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_ui_automation(),
+            provider: crate::platform::create_ui_automation()
+                .expect("UI automation not available on this platform"),
         }
     }
 }
@@ -96,7 +97,8 @@ impl Default for ClickElementTool {
 impl ClickElementTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_ui_automation(),
+            provider: crate::platform::create_ui_automation()
+                .expect("UI automation not available on this platform"),
         }
     }
 }
@@ -167,7 +169,8 @@ impl Default for TypeTextTool {
 impl TypeTextTool {
     pub fn new() -> Self {
         Self {
-            provider: crate::platform::create_ui_automation(),
+            provider: crate::platform::create_ui_automation()
+                .expect("UI automation not available on this platform"),
         }
     }
 }

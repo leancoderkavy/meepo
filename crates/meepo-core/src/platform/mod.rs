@@ -156,34 +156,34 @@ pub trait BrowserProvider: Send + Sync {
 }
 
 /// Create platform email provider
-pub fn create_email_provider() -> Box<dyn EmailProvider> {
+pub fn create_email_provider() -> Result<Box<dyn EmailProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsEmailProvider)
+        Ok(Box::new(macos::MacOsEmailProvider))
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::WindowsEmailProvider)
+        Ok(Box::new(windows::WindowsEmailProvider))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        panic!("Email provider not available on this platform")
+        Err(anyhow::anyhow!("Email provider not available on this platform"))
     }
 }
 
 /// Create platform calendar provider
-pub fn create_calendar_provider() -> Box<dyn CalendarProvider> {
+pub fn create_calendar_provider() -> Result<Box<dyn CalendarProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsCalendarProvider)
+        Ok(Box::new(macos::MacOsCalendarProvider))
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::WindowsCalendarProvider)
+        Ok(Box::new(windows::WindowsCalendarProvider))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        panic!("Calendar provider not available on this platform")
+        Err(anyhow::anyhow!("Calendar provider not available on this platform"))
     }
 }
 
@@ -198,125 +198,125 @@ pub fn create_app_launcher() -> Box<dyn AppLauncher> {
 }
 
 /// Create platform UI automation provider
-pub fn create_ui_automation() -> Box<dyn UiAutomation> {
+pub fn create_ui_automation() -> Result<Box<dyn UiAutomation>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsUiAutomation)
+        Ok(Box::new(macos::MacOsUiAutomation))
     }
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::WindowsUiAutomation)
+        Ok(Box::new(windows::WindowsUiAutomation))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        panic!("UI automation not available on this platform")
+        Err(anyhow::anyhow!("UI automation not available on this platform"))
     }
 }
 
 /// Create platform reminders provider (macOS only)
-pub fn create_reminders_provider() -> Box<dyn RemindersProvider> {
+pub fn create_reminders_provider() -> Result<Box<dyn RemindersProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsRemindersProvider)
+        Ok(Box::new(macos::MacOsRemindersProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Reminders provider only available on macOS")
+        Err(anyhow::anyhow!("Reminders provider is only available on macOS"))
     }
 }
 
 /// Create platform notes provider (macOS only)
-pub fn create_notes_provider() -> Box<dyn NotesProvider> {
+pub fn create_notes_provider() -> Result<Box<dyn NotesProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsNotesProvider)
+        Ok(Box::new(macos::MacOsNotesProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Notes provider only available on macOS")
+        Err(anyhow::anyhow!("Notes provider is only available on macOS"))
     }
 }
 
 /// Create platform notification provider (macOS only)
-pub fn create_notification_provider() -> Box<dyn NotificationProvider> {
+pub fn create_notification_provider() -> Result<Box<dyn NotificationProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsNotificationProvider)
+        Ok(Box::new(macos::MacOsNotificationProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Notification provider only available on macOS")
+        Err(anyhow::anyhow!("Notification provider is only available on macOS"))
     }
 }
 
 /// Create platform screen capture provider (macOS only)
-pub fn create_screen_capture_provider() -> Box<dyn ScreenCaptureProvider> {
+pub fn create_screen_capture_provider() -> Result<Box<dyn ScreenCaptureProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsScreenCaptureProvider)
+        Ok(Box::new(macos::MacOsScreenCaptureProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Screen capture provider only available on macOS")
+        Err(anyhow::anyhow!("Screen capture provider is only available on macOS"))
     }
 }
 
 /// Create platform music provider (macOS only)
-pub fn create_music_provider() -> Box<dyn MusicProvider> {
+pub fn create_music_provider() -> Result<Box<dyn MusicProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsMusicProvider)
+        Ok(Box::new(macos::MacOsMusicProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Music provider only available on macOS")
+        Err(anyhow::anyhow!("Music provider is only available on macOS"))
     }
 }
 
 /// Create platform contacts provider (macOS only)
-pub fn create_contacts_provider() -> Box<dyn ContactsProvider> {
+pub fn create_contacts_provider() -> Result<Box<dyn ContactsProvider>> {
     #[cfg(target_os = "macos")]
     {
-        Box::new(macos::MacOsContactsProvider)
+        Ok(Box::new(macos::MacOsContactsProvider))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        panic!("Contacts provider only available on macOS")
+        Err(anyhow::anyhow!("Contacts provider is only available on macOS"))
     }
 }
 
 /// Create Safari browser provider (macOS only)
-pub fn create_browser_provider() -> Box<dyn BrowserProvider> {
+pub fn create_browser_provider() -> Result<Box<dyn BrowserProvider>> {
     create_browser_provider_for("safari")
 }
 
 /// Create browser provider for a specific browser
-pub fn create_browser_provider_for(browser: &str) -> Box<dyn BrowserProvider> {
+pub fn create_browser_provider_for(browser: &str) -> Result<Box<dyn BrowserProvider>> {
     match browser.to_lowercase().as_str() {
         "safari" => {
             #[cfg(target_os = "macos")]
             {
-                Box::new(macos::MacOsSafariBrowser)
+                Ok(Box::new(macos::MacOsSafariBrowser))
             }
             #[cfg(not(target_os = "macos"))]
             {
-                panic!("Safari browser provider only available on macOS")
+                Err(anyhow::anyhow!("Safari browser provider is only available on macOS"))
             }
         }
         "chrome" | "google chrome" => {
             #[cfg(target_os = "macos")]
             {
-                Box::new(macos::MacOsChromeBrowser)
+                Ok(Box::new(macos::MacOsChromeBrowser))
             }
             #[cfg(not(target_os = "macos"))]
             {
-                panic!("Chrome browser provider only available on macOS")
+                Err(anyhow::anyhow!("Chrome browser provider is only available on macOS"))
             }
         }
-        _ => panic!(
+        _ => Err(anyhow::anyhow!(
             "Unsupported browser: {}. Supported: safari, chrome",
             browser
-        ),
+        )),
     }
 }
 
@@ -392,20 +392,20 @@ mod tests {
 
     #[test]
     fn test_platform_providers_create() {
-        let _email = create_email_provider();
-        let _calendar = create_calendar_provider();
-        let _ui = create_ui_automation();
+        let _email = create_email_provider().unwrap();
+        let _calendar = create_calendar_provider().unwrap();
+        let _ui = create_ui_automation().unwrap();
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn test_macos_providers_create() {
-        let _reminders = create_reminders_provider();
-        let _notes = create_notes_provider();
-        let _notification = create_notification_provider();
-        let _screen = create_screen_capture_provider();
-        let _music = create_music_provider();
-        let _contacts = create_contacts_provider();
-        let _browser = create_browser_provider();
+        let _reminders = create_reminders_provider().unwrap();
+        let _notes = create_notes_provider().unwrap();
+        let _notification = create_notification_provider().unwrap();
+        let _screen = create_screen_capture_provider().unwrap();
+        let _music = create_music_provider().unwrap();
+        let _contacts = create_contacts_provider().unwrap();
+        let _browser = create_browser_provider().unwrap();
     }
 }

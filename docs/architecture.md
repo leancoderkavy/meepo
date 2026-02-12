@@ -296,6 +296,8 @@ graph TD
 | `recall` | Search entities by name/type | SQLite query |
 | `search_knowledge` | Full-text search knowledge graph | Tantivy search |
 | `link_entities` | Create relationship between entities | SQLite insert |
+| `smart_recall` | GraphRAG-powered knowledge retrieval | Tantivy search + graph traversal |
+| `ingest_document` | Chunk and index a document | Recursive splitting + SQLite/Tantivy |
 | `run_command` | Execute shell command (allowlisted) | `sh -c` with 30s timeout |
 | `read_file` | Read file contents | `tokio::fs::read_to_string` |
 | `write_file` | Write file contents | `tokio::fs::write` |
@@ -362,6 +364,44 @@ The knowledge layer has two backends:
 - **Tantivy** (`TantivyIndex`) — Full-text search index over entity content, returning relevance-ranked results
 
 `KnowledgeGraph` combines both, indexing entities in Tantivy on insert and delegating searches to the appropriate backend.
+
+## RAG Features
+
+The agent integrates 8 retrieval-augmented generation features inspired by LangChain v1 and recent RAG research (2024–2025). All are configurable via `config/default.toml` under the `[rag.*]` sections.
+
+### Agent Loop Integration
+
+```
+User Query
+  │
+  ├─ 1. Adaptive Query Routing    (query_router.rs)   — classify complexity → retrieval strategy
+  ├─ 2. Context Loading
+  │     ├─ Conversation Summarization (summarization.rs) — compress old history, keep recent verbatim
+  │     ├─ Knowledge Search           (Tantivy BM25)
+  │     └─ GraphRAG Expansion         (graph_rag.rs)     — traverse relationships for richer context
+  ├─ 3. Tool Selection             (tool_selector.rs)  — heuristic + optional LLM to pick relevant tools
+  ├─ 4. Claude API Call            (api.rs tool loop)
+  │     └─ Middleware Chain         (middleware.rs)     — before_model / after_model / before_tool / after_tool hooks
+  └─ 5. Corrective RAG            (corrective_rag.rs) — validate retrieval relevance, refine query if needed
+```
+
+| Feature | Module | Default | Description |
+|---------|--------|---------|-------------|
+| Conversation Summarization | `meepo-core/summarization.rs` | Enabled | Summarizes older conversation history when context exceeds threshold (60k chars). Keeps recent 10 messages verbatim. |
+| Vector Embeddings + Hybrid Search | `meepo-knowledge/embeddings.rs` | Disabled | Local ONNX embedding generation via `fastembed-rs`. Hybrid search combines BM25 + cosine similarity with Reciprocal Rank Fusion. |
+| GraphRAG | `meepo-knowledge/graph_rag.rs` | Enabled | Expands search results by traversing entity relationships (up to 2 hops). Scores decay by 0.5× per hop. |
+| LLM Tool Selector | `meepo-core/tool_selector.rs` | Enabled | Heuristic keyword matching selects relevant tools per query. Falls back to LLM classification for ambiguous cases. Activates when 20+ tools registered. |
+| Adaptive Query Routing | `meepo-core/query_router.rs` | Enabled | Classifies queries as NoRetrieval / SingleStep / MultiSource / MultiHop. Determines which retrieval backends to use. |
+| Document Chunking + Ingestion | `meepo-knowledge/chunking.rs` | — | Recursive character splitting with 1000-char chunks and 200-char overlap. Powers the `ingest_document` tool. |
+| Corrective RAG | `meepo-core/corrective_rag.rs` | Disabled | Validates retrieval relevance via LLM, refines query if too many irrelevant results. Opt-in due to added latency. |
+| Middleware Architecture | `meepo-core/middleware.rs` | — | Composable hook chain for pre/post processing of model calls and tool calls. Built-in: logging, tool call limits, output truncation. |
+
+### New Tools
+
+| Tool | Description |
+|------|-------------|
+| `smart_recall` | GraphRAG-powered knowledge retrieval — searches Tantivy then traverses entity relationships for richer context |
+| `ingest_document` | Reads a file, chunks it recursively, and indexes each chunk as a linked entity in the knowledge graph |
 
 ## Watcher System
 

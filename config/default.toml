@@ -206,13 +206,14 @@ send_acknowledgments = true   # send typing/ack indicators before processing
 
 
 # ── Notifications ───────────────────────────────────────────────
-# Proactive iMessage (or other channel) alerts throughout the day.
+# Proactive alerts throughout the day via your preferred channel.
 # Meepo will message you when it takes autonomous actions, when
 # watchers trigger, when background tasks complete, and more.
 #
-# Requirements (for iMessage):
+# Requirements (for iMessage — macOS only):
 #   - iMessage channel must also be enabled above
 #   - macOS with Messages app signed into iMessage
+# On Windows: Use "discord" or "slack" as the notification channel.
 
 [notifications]
 enabled = false
@@ -291,7 +292,7 @@ enabled = false
 dir = "~/.meepo/skills"
 
 
-# ── Browser Automation (macOS only) ──────────────────────────────
+# ── Browser Automation (macOS only — not yet available on Windows) ─
 # Control Safari or Chrome via AppleScript.
 # Tools: browser_list_tabs, browser_open_tab, browser_close_tab,
 #         browser_switch_tab, browser_get_page_content, browser_execute_js,
@@ -304,6 +305,9 @@ dir = "~/.meepo/skills"
 #     Safari → Settings → Advanced → check "Show features for web developers"
 #     then Develop menu → Allow JavaScript from Apple Events
 #   - Chrome: No extra setup needed (AppleScript support built-in)
+#
+# Windows: Browser automation is not yet implemented. This section
+# is ignored on Windows.
 
 [browser]
 enabled = true

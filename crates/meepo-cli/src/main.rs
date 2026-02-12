@@ -207,25 +207,8 @@ async fn cmd_setup() -> Result<()> {
         prompt_api_key()?
     };
 
-    // Write API key to shell RC
-    let shell_rc = detect_shell_rc();
-    if let Some(rc_path) = &shell_rc {
-        let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();
-        if !rc_content.contains("ANTHROPIC_API_KEY") {
-            let mut file = std::fs::OpenOptions::new().append(true).open(rc_path)?;
-            writeln!(file, "\nexport ANTHROPIC_API_KEY=\"{}\"", api_key)?;
-            println!("  ✓ Saved to {}", rc_path.display());
-        } else {
-            println!("  ✓ Already in {}", rc_path.display());
-        }
-    } else {
-        println!(
-            "  ⚠ Could not detect shell (SHELL={:?}).",
-            std::env::var("SHELL").unwrap_or_default()
-        );
-        println!("  Add this to your shell profile manually:");
-        println!("    export ANTHROPIC_API_KEY=\"{}\"", api_key);
-    }
+    // Persist API key
+    save_env_var_persistent("ANTHROPIC_API_KEY", &api_key)?;
     println!();
 
     // ── Step 3: Optional Tavily key ─────────────────────────────
@@ -247,13 +230,7 @@ async fn cmd_setup() -> Result<()> {
     let tavily_key = tavily_key.trim().to_string();
 
     if !tavily_key.is_empty() {
-        if let Some(rc_path) = &shell_rc {
-            let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();
-            if !rc_content.contains("TAVILY_API_KEY") {
-                let mut file = std::fs::OpenOptions::new().append(true).open(rc_path)?;
-                writeln!(file, "export TAVILY_API_KEY=\"{}\"", tavily_key)?;
-            }
-        }
+        save_env_var_persistent("TAVILY_API_KEY", &tavily_key)?;
         println!("  ✓ Saved.\n");
     } else {
         println!("  Skipped — web_search tool won't be available.\n");
@@ -800,6 +777,71 @@ fn detect_shell_rc() -> Option<PathBuf> {
     }
 }
 
+/// Persist an environment variable across sessions.
+/// On macOS/Linux: appends `export VAR="value"` to the shell RC file.
+/// On Windows: sets a User-scope environment variable via PowerShell.
+fn save_env_var_persistent(name: &str, value: &str) -> Result<()> {
+    use std::io::Write;
+
+    #[cfg(target_os = "windows")]
+    {
+        // Check if already set in User scope
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "[Environment]::GetEnvironmentVariable('{}', 'User')",
+                    name
+                ),
+            ])
+            .output()?;
+        let existing = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !existing.is_empty() {
+            println!("  ✓ {} already set in User environment.", name);
+            return Ok(());
+        }
+
+        // Set in User scope and current session
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "[Environment]::SetEnvironmentVariable('{}', '{}', 'User')",
+                    name, value
+                ),
+            ])
+            .output()?;
+        std::env::set_var(name, value);
+        println!("  ✓ Saved {} to User environment variables.", name);
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let shell_rc = detect_shell_rc();
+        if let Some(rc_path) = &shell_rc {
+            let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();
+            if !rc_content.contains(name) {
+                let mut file = std::fs::OpenOptions::new().append(true).open(rc_path)?;
+                writeln!(file, "\nexport {}=\"{}\"", name, value)?;
+                println!("  ✓ Saved to {}", rc_path.display());
+            } else {
+                println!("  ✓ Already in {}", rc_path.display());
+            }
+        } else {
+            println!(
+                "  ⚠ Could not detect shell (SHELL={:?}).",
+                std::env::var("SHELL").unwrap_or_default()
+            );
+            println!("  Add this to your shell profile manually:");
+            println!("    export {}=\"{}\"", name, value);
+        }
+        Ok(())
+    }
+}
+
 async fn cmd_config(config_path: &Option<PathBuf>) -> Result<()> {
     let cfg = MeepoConfig::load(config_path)?;
     println!("{}", toml::to_string_pretty(&cfg)?);
@@ -996,6 +1038,14 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(meepo_core::tools::memory::LinkEntitiesTool::new(
         db.clone(),
     )));
+    // RAG-enhanced tools: GraphRAG-powered recall and document ingestion
+    registry.register(Arc::new(meepo_core::tools::rag::SmartRecallTool::new(
+        knowledge_graph.clone(),
+        db.clone(),
+    )));
+    registry.register(Arc::new(
+        meepo_core::tools::rag::IngestDocumentTool::new(knowledge_graph.clone()),
+    ));
     registry.register(Arc::new(meepo_core::tools::system::RunCommandTool));
     registry.register(Arc::new(meepo_core::tools::system::ReadFileTool));
     registry.register(Arc::new(meepo_core::tools::system::WriteFileTool));

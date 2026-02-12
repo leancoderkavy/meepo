@@ -19,7 +19,8 @@ pub struct BrowserListTabsTool {
 impl BrowserListTabsTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -66,7 +67,8 @@ pub struct BrowserOpenTabTool {
 impl BrowserOpenTabTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -117,7 +119,8 @@ pub struct BrowserCloseTabTool {
 impl BrowserCloseTabTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -164,7 +167,8 @@ pub struct BrowserSwitchTabTool {
 impl BrowserSwitchTabTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -211,7 +215,8 @@ pub struct BrowserGetPageContentTool {
 impl BrowserGetPageContentTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -258,7 +263,8 @@ pub struct BrowserExecuteJsTool {
 impl BrowserExecuteJsTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -347,7 +353,8 @@ pub struct BrowserClickElementTool {
 impl BrowserClickElementTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -403,7 +410,8 @@ pub struct BrowserFillFormTool {
 impl BrowserFillFormTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -470,7 +478,8 @@ pub struct BrowserNavigateTool {
 impl BrowserNavigateTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -540,7 +549,8 @@ pub struct BrowserGetUrlTool {
 impl BrowserGetUrlTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }
@@ -582,7 +592,8 @@ pub struct BrowserScreenshotTool {
 impl BrowserScreenshotTool {
     pub fn new(browser: &str) -> Self {
         Self {
-            provider: crate::platform::create_browser_provider_for(browser),
+            provider: crate::platform::create_browser_provider_for(browser)
+                .expect("Browser provider not available on this platform"),
         }
     }
 }

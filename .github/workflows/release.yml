@@ -25,6 +25,9 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: meepo-windows-x64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            name: meepo-windows-arm64
 
     runs-on: ${{ matrix.os }}
 

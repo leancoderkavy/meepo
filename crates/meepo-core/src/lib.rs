@@ -23,6 +23,7 @@ pub mod tavily;
 pub mod tool_selector;
 pub mod tools;
 pub mod types;
+pub mod usage;
 
 // Re-export main types for convenience
 pub use agent::Agent;
@@ -41,6 +42,7 @@ pub use summarization::SummarizationConfig;
 pub use tool_selector::ToolSelectorConfig;
 pub use tools::{ToolExecutor, ToolHandler, ToolRegistry};
 pub use types::{ChannelType, IncomingMessage, MessageKind, OutgoingMessage};
+pub use usage::{AccumulatedUsage, BudgetStatus, UsageConfig, UsageSource, UsageTracker};
 
 #[cfg(test)]
 mod tests {

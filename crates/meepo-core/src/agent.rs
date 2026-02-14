@@ -12,6 +12,7 @@ use crate::summarization::{self, SummarizationConfig};
 use crate::tool_selector::{self, ToolSelectorConfig};
 use crate::tools::{ToolExecutor, ToolRegistry};
 use crate::types::{IncomingMessage, MessageKind, OutgoingMessage};
+use crate::usage::{UsageSource, UsageTracker};
 
 use meepo_knowledge::KnowledgeDb;
 
@@ -33,6 +34,8 @@ pub struct Agent {
     summarization_config: SummarizationConfig,
     /// Tool selection configuration
     tool_selector_config: ToolSelectorConfig,
+    /// Usage tracker for cost monitoring
+    usage_tracker: Option<Arc<UsageTracker>>,
 }
 
 impl Agent {
@@ -54,6 +57,7 @@ impl Agent {
             router_config: QueryRouterConfig::default(),
             summarization_config: SummarizationConfig::default(),
             tool_selector_config: ToolSelectorConfig::default(),
+            usage_tracker: None,
         }
     }
 
@@ -78,6 +82,12 @@ impl Agent {
     /// Set the tool selector configuration
     pub fn with_tool_selector_config(mut self, config: ToolSelectorConfig) -> Self {
         self.tool_selector_config = config;
+        self
+    }
+
+    /// Set the usage tracker
+    pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
+        self.usage_tracker = Some(tracker);
         self
     }
 
@@ -135,8 +145,36 @@ impl Agent {
             tool_definitions.len()
         );
 
+        // Check budget before making API call
+        if let Some(tracker) = &self.usage_tracker {
+            match tracker.check_budget().await {
+                Ok(crate::usage::BudgetStatus::Exceeded { period, spent, budget }) => {
+                    return Ok(OutgoingMessage {
+                        content: format!(
+                            "I've reached my {} budget limit (${:.2} of ${:.2}). \
+                             Please increase the budget in config.toml or wait for the next period.",
+                            period, spent, budget
+                        ),
+                        channel: msg.channel,
+                        reply_to: Some(msg.id),
+                        kind: MessageKind::Response,
+                    });
+                }
+                Ok(crate::usage::BudgetStatus::Warning { period, spent, budget, percent }) => {
+                    debug!(
+                        "Budget warning: {} at {:.0}% (${:.2} of ${:.2})",
+                        period, percent, spent, budget
+                    );
+                }
+                Ok(crate::usage::BudgetStatus::Ok) => {}
+                Err(e) => {
+                    debug!("Budget check failed (proceeding anyway): {}", e);
+                }
+            }
+        }
+
         // Run the tool loop to get final response
-        let response_text = self
+        let (response_text, usage) = self
             .api
             .run_tool_loop(
                 &msg.content,
@@ -147,13 +185,32 @@ impl Agent {
             .await
             .context("Failed to run agent tool loop")?;
 
+        // Record usage
+        if let Some(tracker) = &self.usage_tracker {
+            if let Err(e) = tracker
+                .record(
+                    self.api.model(),
+                    &usage,
+                    &UsageSource::User,
+                    Some(&msg.channel.to_string()),
+                )
+                .await
+            {
+                debug!("Failed to record usage: {}", e);
+            }
+        }
+
         // Store the response in conversation history
         self.db
             .insert_conversation(&msg.channel.to_string(), "meepo", &response_text, None)
             .await
             .context("Failed to store response")?;
 
-        info!("Generated response ({} chars)", response_text.len());
+        info!(
+            "Generated response ({} chars, {} tokens)",
+            response_text.len(),
+            usage.total_tokens()
+        );
 
         Ok(OutgoingMessage {
             content: response_text,
@@ -298,6 +355,16 @@ impl Agent {
     /// Get reference to the knowledge database
     pub fn db(&self) -> &Arc<KnowledgeDb> {
         &self.db
+    }
+
+    /// Get reference to the API client
+    pub fn api(&self) -> &ApiClient {
+        &self.api
+    }
+
+    /// Get reference to the usage tracker
+    pub fn usage_tracker(&self) -> Option<&Arc<UsageTracker>> {
+        self.usage_tracker.as_ref()
     }
 }
 

@@ -202,7 +202,7 @@ impl IMessageChannel {
                 timestamp,
             };
 
-            info!("Forwarding iMessage from {}: {}", handle, content);
+            info!("Forwarding iMessage from {} ({} chars)", handle, content.len());
 
             if let Err(e) = tx.send(incoming).await {
                 error!("Failed to send iMessage to bus: {}", e);
@@ -250,11 +250,16 @@ end tell"#,
 
         debug!("Executing AppleScript to send iMessage");
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(&applescript)
-            .output()
-            .await?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&applescript)
+                .output(),
+        )
+        .await
+        .map_err(|_| anyhow!("iMessage send timed out after 30 seconds"))?
+        ?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

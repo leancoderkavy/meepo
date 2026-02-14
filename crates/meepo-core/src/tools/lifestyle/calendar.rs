@@ -114,8 +114,6 @@ impl ToolHandler for FindFreeTimeTool {
 pub struct ScheduleMeetingTool {
     calendar: Box<dyn CalendarProvider>,
     contacts: Option<Box<dyn ContactsProvider>>,
-    #[allow(dead_code)]
-    email: Box<dyn EmailProvider>,
 }
 
 impl ScheduleMeetingTool {
@@ -124,8 +122,6 @@ impl ScheduleMeetingTool {
             calendar: crate::platform::create_calendar_provider()
                 .expect("Calendar provider not available on this platform"),
             contacts: crate::platform::create_contacts_provider().ok(),
-            email: crate::platform::create_email_provider()
-                .expect("Email provider not available on this platform"),
         }
     }
 }

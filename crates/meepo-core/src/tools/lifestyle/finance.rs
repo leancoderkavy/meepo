@@ -481,14 +481,11 @@ impl ToolHandler for BudgetCheckTool {
 }
 
 /// Parse expense from receipt email
-pub struct ParseReceiptTool {
-    #[allow(dead_code)]
-    db: Arc<KnowledgeDb>,
-}
+pub struct ParseReceiptTool;
 
 impl ParseReceiptTool {
-    pub fn new(db: Arc<KnowledgeDb>) -> Self {
-        Self { db }
+    pub fn new(_db: Arc<KnowledgeDb>) -> Self {
+        Self
     }
 }
 

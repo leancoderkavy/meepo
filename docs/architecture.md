@@ -2,7 +2,7 @@
 
 ## Overview
 
-Meepo is a 7-crate Rust workspace implementing a local AI agent for macOS and Windows. It runs an autonomous observe/think/act loop, connects Claude to messaging channels (Discord, Slack, iMessage, email), gives it access to 40+ tools (email, calendar, reminders, notes, browser automation, web search, code, music, contacts, and more), maintains a persistent knowledge graph, and speaks both MCP and A2A protocols for multi-agent interop.
+Meepo is a 7-crate Rust workspace implementing a local AI agent for macOS and Windows. It runs an autonomous observe/think/act loop, connects Claude to messaging channels (Discord, Slack, iMessage, email), gives it access to 75+ tools (email, calendar, reminders, notes, browser automation, web search, code, music, contacts, lifestyle integrations, and more), maintains a persistent knowledge graph, and speaks both MCP and A2A protocols for multi-agent interop.
 
 ## Crate Dependency Graph
 
@@ -244,6 +244,16 @@ graph TD
         Au["Autonomous (3)"]
         D["Delegation (1)"]
         Sk["Skills (dynamic)"]
+        LE["Email Intelligence (4)"]
+        LC["Smart Calendar (5)"]
+        LR["Deep Research (4)"]
+        LS["SMS Autopilot (3)"]
+        LT["Task Manager (5)"]
+        LN["News Curator (4)"]
+        LF["Finance Tracker (4)"]
+        LH["Health & Habits (3)"]
+        LV["Travel Assistant (4)"]
+        LSo["Social Manager (2)"]
     end
 
     Categories --> Registry

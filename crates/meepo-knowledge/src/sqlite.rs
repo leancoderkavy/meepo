@@ -101,6 +101,51 @@ pub struct ActionLogEntry {
     pub created_at: DateTime<Utc>,
 }
 
+/// Queued action awaiting user approval
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalEntry {
+    pub id: String,
+    pub action_type: String,
+    pub description: String,
+    pub risk_level: String,
+    pub goal_id: Option<String>,
+    pub prompt: String,
+    pub status: String, // pending|approved|rejected
+    pub decided_at: Option<String>,
+    pub created_at: String,
+}
+
+/// Summary of usage for a time period
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummary {
+    pub period: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_api_calls: u64,
+    pub total_tool_calls: u64,
+    pub estimated_cost_usd: f64,
+    pub by_source: std::collections::HashMap<String, SourceUsage>,
+    pub by_model: std::collections::HashMap<String, ModelUsage>,
+}
+
+/// Usage breakdown by source
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub api_calls: u64,
+    pub estimated_cost_usd: f64,
+}
+
+/// Usage breakdown by model
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub api_calls: u64,
+    pub estimated_cost_usd: f64,
+}
+
 /// Background task spawned by the agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundTask {
@@ -290,6 +335,26 @@ impl KnowledgeDb {
             [],
         )?;
 
+        // Create approval_queue table for high-risk autonomous actions
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS approval_queue (
+                id TEXT PRIMARY KEY,
+                action_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                risk_level TEXT NOT NULL,
+                goal_id TEXT,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decided_at TEXT,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_queue_status ON approval_queue(status)",
+            [],
+        )?;
+
         // Create background_tasks table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS background_tasks (
@@ -306,6 +371,38 @@ impl KnowledgeDb {
         )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status)",
+            [],
+        )?;
+
+        // Create usage_log table for AI cost tracking
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_cost_usd REAL NOT NULL,
+                source TEXT NOT NULL,
+                channel TEXT,
+                tool_calls_count INTEGER NOT NULL DEFAULT 0,
+                tool_names TEXT,
+                session_id TEXT
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_log_source ON usage_log(source)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_log_model ON usage_log(model)",
             [],
         )?;
 
@@ -1236,6 +1333,100 @@ impl KnowledgeDb {
         .context("spawn_blocking task panicked")?
     }
 
+    // ── Approval Queue ──────────────────────────────────────────────
+
+    /// Queue an action for user approval
+    pub async fn insert_approval(
+        &self,
+        action_type: &str,
+        description: &str,
+        risk_level: &str,
+        goal_id: Option<&str>,
+        prompt: &str,
+    ) -> Result<String> {
+        let conn = Arc::clone(&self.conn);
+        let action_type = action_type.to_owned();
+        let description = description.to_owned();
+        let risk_level = risk_level.to_owned();
+        let goal_id = goal_id.map(|s| s.to_owned());
+        let prompt = prompt.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let id = Uuid::new_v4().to_string();
+            let now = Utc::now();
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            conn.execute(
+                "INSERT INTO approval_queue (id, action_type, description, risk_level, goal_id, prompt, status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
+                params![&id, &action_type, &description, &risk_level, goal_id, &prompt, now.to_rfc3339()],
+            )?;
+            debug!("Queued action for approval: {} - {}", action_type, description);
+            Ok(id)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get all pending approval requests
+    pub async fn get_pending_approvals(&self) -> Result<Vec<ApprovalEntry>> {
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let mut stmt = conn.prepare(
+                "SELECT id, action_type, description, risk_level, goal_id, prompt, status, decided_at, created_at
+                 FROM approval_queue WHERE status = 'pending' ORDER BY created_at ASC",
+            )?;
+            let entries = stmt
+                .query_map([], |row| {
+                    Ok(ApprovalEntry {
+                        id: row.get(0)?,
+                        action_type: row.get(1)?,
+                        description: row.get(2)?,
+                        risk_level: row.get(3)?,
+                        goal_id: row.get(4)?,
+                        prompt: row.get(5)?,
+                        status: row.get(6)?,
+                        decided_at: row.get(7)?,
+                        created_at: row.get(8)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(entries)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Approve or reject a queued action
+    pub async fn decide_approval(&self, id: &str, approved: bool) -> Result<()> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_owned();
+        let status = if approved { "approved" } else { "rejected" };
+
+        tokio::task::spawn_blocking(move || {
+            let now = Utc::now();
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            conn.execute(
+                "UPDATE approval_queue SET status = ?1, decided_at = ?2 WHERE id = ?3",
+                params![status, now.to_rfc3339(), &id],
+            )?;
+            debug!("Approval {} decided: {}", id, status);
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
     /// Clean up old conversations (keep only last N days)
     pub async fn cleanup_old_conversations(&self, retain_days: u32) -> Result<usize> {
         let conn = Arc::clone(&self.conn);
@@ -1381,6 +1572,258 @@ impl KnowledgeDb {
                 .unwrap_or_else(|_| Utc::now()),
             result: row.get(7)?,
         })
+    }
+
+    // ── Usage Tracking ─────────────────────────────────────────────
+
+    /// Insert a usage log entry
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_usage_log(
+        &self,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        estimated_cost_usd: f64,
+        source: &str,
+        channel: Option<&str>,
+        tool_calls_count: u32,
+        tool_names: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        let conn = Arc::clone(&self.conn);
+        let model = model.to_owned();
+        let source = source.to_owned();
+        let channel = channel.map(|s| s.to_owned());
+        let tool_names = tool_names.to_owned();
+        let session_id = session_id.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let now = Utc::now();
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            conn.execute(
+                "INSERT INTO usage_log (timestamp, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, estimated_cost_usd, source, channel, tool_calls_count, tool_names, session_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    now.to_rfc3339(),
+                    &model,
+                    input_tokens as i64,
+                    output_tokens as i64,
+                    cache_read_tokens as i64,
+                    cache_write_tokens as i64,
+                    estimated_cost_usd,
+                    &source,
+                    channel,
+                    tool_calls_count as i64,
+                    &tool_names,
+                    &session_id,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get total estimated cost for a specific date (YYYY-MM-DD)
+    pub async fn get_usage_cost_for_date(&self, date: &str) -> Result<f64> {
+        let conn = Arc::clone(&self.conn);
+        let date = date.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let cost: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(estimated_cost_usd), 0.0) FROM usage_log WHERE date(timestamp) = ?1",
+                    params![&date],
+                    |row| row.get(0),
+                )?;
+            Ok(cost)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get total estimated cost for a date range (inclusive)
+    pub async fn get_usage_cost_for_range(&self, start: &str, end: &str) -> Result<f64> {
+        let conn = Arc::clone(&self.conn);
+        let start = start.to_owned();
+        let end = end.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+            let cost: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(estimated_cost_usd), 0.0) FROM usage_log WHERE date(timestamp) >= ?1 AND date(timestamp) <= ?2",
+                    params![&start, &end],
+                    |row| row.get(0),
+                )?;
+            Ok(cost)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Get a usage summary for a date range
+    pub async fn get_usage_summary(&self, start: &str, end: &str) -> Result<UsageSummary> {
+        let conn = Arc::clone(&self.conn);
+        let start = start.to_owned();
+        let end = end.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+
+            // Totals
+            let (total_input, total_output, total_calls, total_tools, total_cost): (i64, i64, i64, i64, f64) = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COUNT(*), COALESCE(SUM(tool_calls_count), 0), COALESCE(SUM(estimated_cost_usd), 0.0)
+                     FROM usage_log WHERE date(timestamp) >= ?1 AND date(timestamp) <= ?2",
+                    params![&start, &end],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                )?;
+
+            // By source
+            let mut by_source = std::collections::HashMap::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT source, SUM(input_tokens), SUM(output_tokens), COUNT(*), SUM(estimated_cost_usd)
+                     FROM usage_log WHERE date(timestamp) >= ?1 AND date(timestamp) <= ?2
+                     GROUP BY source",
+                )?;
+                let rows = stmt.query_map(params![&start, &end], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, f64>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (source, inp, out, calls, cost) = row?;
+                    by_source.insert(source, SourceUsage {
+                        input_tokens: inp as u64,
+                        output_tokens: out as u64,
+                        api_calls: calls as u64,
+                        estimated_cost_usd: cost,
+                    });
+                }
+            }
+
+            // By model
+            let mut by_model = std::collections::HashMap::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT model, SUM(input_tokens), SUM(output_tokens), COUNT(*), SUM(estimated_cost_usd)
+                     FROM usage_log WHERE date(timestamp) >= ?1 AND date(timestamp) <= ?2
+                     GROUP BY model",
+                )?;
+                let rows = stmt.query_map(params![&start, &end], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, f64>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (model, inp, out, calls, cost) = row?;
+                    by_model.insert(model, ModelUsage {
+                        input_tokens: inp as u64,
+                        output_tokens: out as u64,
+                        api_calls: calls as u64,
+                        estimated_cost_usd: cost,
+                    });
+                }
+            }
+
+            let period = if start == end {
+                start.clone()
+            } else {
+                format!("{} to {}", start, end)
+            };
+
+            Ok(UsageSummary {
+                period,
+                total_input_tokens: total_input as u64,
+                total_output_tokens: total_output as u64,
+                total_api_calls: total_calls as u64,
+                total_tool_calls: total_tools as u64,
+                estimated_cost_usd: total_cost,
+                by_source,
+                by_model,
+            })
+        })
+        .await
+        .context("spawn_blocking task panicked")?
+    }
+
+    /// Export usage data as CSV for a date range
+    pub async fn export_usage_csv(&self, start: &str, end: &str) -> Result<String> {
+        let conn = Arc::clone(&self.conn);
+        let start = start.to_owned();
+        let end = end.to_owned();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|poisoned| {
+                warn!("Database mutex was poisoned, recovering");
+                poisoned.into_inner()
+            });
+
+            let mut csv = String::from("timestamp,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,estimated_cost_usd,source,channel,tool_calls_count,tool_names,session_id\n");
+
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, estimated_cost_usd, source, channel, tool_calls_count, tool_names, session_id
+                 FROM usage_log WHERE date(timestamp) >= ?1 AND date(timestamp) <= ?2
+                 ORDER BY timestamp ASC",
+            )?;
+
+            let rows = stmt.query_map(params![&start, &end], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, f64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                ))
+            })?;
+
+            for row in rows {
+                let (ts, model, inp, out, cr, cw, cost, src, ch, tc, tn, sid) = row?;
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{},{:.6},{},{},{},{},{}\n",
+                    ts, model, inp, out, cr, cw, cost, src,
+                    ch.unwrap_or_default(), tc,
+                    tn.unwrap_or_default(),
+                    sid.unwrap_or_default(),
+                ));
+            }
+
+            Ok(csv)
+        })
+        .await
+        .context("spawn_blocking task panicked")?
     }
 }
 

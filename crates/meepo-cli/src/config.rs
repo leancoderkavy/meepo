@@ -28,6 +28,8 @@ pub struct MeepoConfig {
     pub browser: BrowserConfig,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub usage: UsageCliConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +136,8 @@ pub struct SlackConfig {
     pub bot_token: String,
     #[serde(default = "default_slack_poll_interval")]
     pub poll_interval_secs: u64,
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
 }
 
 impl std::fmt::Debug for SlackConfig {
@@ -142,6 +146,7 @@ impl std::fmt::Debug for SlackConfig {
             .field("enabled", &self.enabled)
             .field("bot_token", &mask_secret(&self.bot_token))
             .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("allowed_users", &self.allowed_users)
             .finish()
     }
 }
@@ -447,6 +452,10 @@ pub struct AutonomyConfig {
     pub max_tokens_per_tick: u32,
     #[serde(default = "default_send_acknowledgments")]
     pub send_acknowledgments: bool,
+    #[serde(default = "default_daily_plan_hour")]
+    pub daily_plan_hour: u32,
+    #[serde(default = "default_max_calls_per_minute")]
+    pub max_calls_per_minute: u32,
 }
 
 fn default_autonomy_enabled() -> bool {
@@ -470,6 +479,12 @@ fn default_max_tokens_per_tick() -> u32 {
 fn default_send_acknowledgments() -> bool {
     true
 }
+fn default_daily_plan_hour() -> u32 {
+    7
+}
+fn default_max_calls_per_minute() -> u32 {
+    10
+}
 
 fn default_autonomy_config() -> AutonomyConfig {
     AutonomyConfig {
@@ -480,6 +495,8 @@ fn default_autonomy_config() -> AutonomyConfig {
         min_confidence_to_act: default_min_confidence(),
         max_tokens_per_tick: default_max_tokens_per_tick(),
         send_acknowledgments: default_send_acknowledgments(),
+        daily_plan_hour: default_daily_plan_hour(),
+        max_calls_per_minute: default_max_calls_per_minute(),
     }
 }
 
@@ -635,6 +652,50 @@ impl Default for BrowserConfig {
     }
 }
 
+// ── Usage & Cost Tracking Config ────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageCliConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub daily_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub monthly_budget_usd: Option<f64>,
+    #[serde(default = "default_warn_at_percent")]
+    pub warn_at_percent: f64,
+    #[serde(default)]
+    pub model_prices: std::collections::HashMap<String, ModelPriceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPriceConfig {
+    #[serde(default)]
+    pub input_per_mtok: f64,
+    #[serde(default)]
+    pub output_per_mtok: f64,
+    #[serde(default)]
+    pub cache_read_per_mtok: f64,
+    #[serde(default)]
+    pub cache_write_per_mtok: f64,
+}
+
+fn default_warn_at_percent() -> f64 {
+    80.0
+}
+
+impl Default for UsageCliConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            daily_budget_usd: None,
+            monthly_budget_usd: None,
+            warn_at_percent: default_warn_at_percent(),
+            model_prices: std::collections::HashMap::new(),
+        }
+    }
+}
+
 // ── Notifications Config ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -728,12 +789,16 @@ pub struct QuietHoursConfig {
 
 /// Mask a secret string for safe display in Debug output / logs.
 /// Shows first 3 and last 4 chars for keys longer than 7 chars, otherwise "***".
+/// Uses char-boundary-safe slicing to avoid panics on multi-byte UTF-8 (L-1 fix).
 fn mask_secret(s: &str) -> String {
     if s.is_empty() {
         return "(empty)".to_string();
     }
-    if s.len() > 7 {
-        format!("{}...{}", &s[..3], &s[s.len() - 4..])
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() > 7 {
+        let prefix: String = chars[..3].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{}...{}", prefix, suffix)
     } else {
         "***".to_string()
     }
@@ -751,21 +816,21 @@ impl MeepoConfig {
             .clone()
             .unwrap_or_else(|| config_dir().join("config.toml"));
 
-        // Check config file permissions (Unix only)
+        // Enforce config file permissions (Unix only, I-2 fix)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let mode = metadata.permissions().mode();
-                // Warn if group or other can read (mode & 0o077 != 0)
+                // Refuse to start if group or other can read (mode & 0o077 != 0)
                 if mode & 0o077 != 0 {
-                    warn!(
+                    return Err(anyhow::anyhow!(
                         "Config file {:?} has overly permissive permissions ({:o}). \
-                         It may contain secrets — consider running: chmod 600 {:?}",
+                         It may contain secrets. Fix with: chmod 600 {:?}",
                         path,
                         mode & 0o777,
                         path
-                    );
+                    ));
                 }
             }
         }

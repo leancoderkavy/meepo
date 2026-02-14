@@ -15,9 +15,10 @@ use serde_json::Value;
 use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, warn};
 
-use crate::api::{ApiClient, ToolDefinition, Usage};
+use crate::api::{ApiClient, ToolDefinition};
 use crate::tools::{ToolExecutor, ToolRegistry};
 use crate::types::{ChannelType, MessageKind, OutgoingMessage};
+use crate::usage::AccumulatedUsage;
 
 /// Execution mode for a task group
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -60,7 +61,7 @@ pub struct SubTaskResult {
     pub task_id: String,
     pub status: SubTaskStatus,
     pub output: String,
-    pub tokens_used: Usage,
+    pub usage: AccumulatedUsage,
 }
 
 /// Tracks a group of sub-tasks
@@ -182,32 +183,23 @@ impl TaskOrchestrator {
         .await;
 
         match result {
-            Ok(Ok(output)) => SubTaskResult {
+            Ok(Ok((output, usage))) => SubTaskResult {
                 task_id: task.task_id,
                 status: SubTaskStatus::Completed,
                 output,
-                tokens_used: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage,
             },
             Ok(Err(e)) => SubTaskResult {
                 task_id: task.task_id,
                 status: SubTaskStatus::Failed,
                 output: format!("Error: {}", e),
-                tokens_used: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: AccumulatedUsage::new(),
             },
             Err(_) => SubTaskResult {
                 task_id: task.task_id,
                 status: SubTaskStatus::TimedOut,
                 output: "Sub-task timed out".to_string(),
-                tokens_used: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: AccumulatedUsage::new(),
             },
         }
     }
@@ -281,10 +273,7 @@ impl TaskOrchestrator {
                     task_id: "unknown".to_string(),
                     status: SubTaskStatus::Failed,
                     output: format!("Task panicked: {}", e),
-                    tokens_used: Usage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                    },
+                    usage: AccumulatedUsage::new(),
                 }),
             }
         }
@@ -393,10 +382,7 @@ impl TaskOrchestrator {
                             task_id: "unknown".to_string(),
                             status: SubTaskStatus::Failed,
                             output: format!("Task panicked: {}", e),
-                            tokens_used: Usage {
-                                input_tokens: 0,
-                                output_tokens: 0,
-                            },
+                            usage: AccumulatedUsage::new(),
                         });
                     }
                 }
@@ -551,19 +537,13 @@ mod tests {
                 task_id: "task_a".to_string(),
                 status: SubTaskStatus::Completed,
                 output: "Found 3 items".to_string(),
-                tokens_used: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: AccumulatedUsage::new(),
             },
             SubTaskResult {
                 task_id: "task_b".to_string(),
                 status: SubTaskStatus::Failed,
                 output: "Error: timeout".to_string(),
-                tokens_used: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: AccumulatedUsage::new(),
             },
         ];
         let formatted = TaskOrchestrator::format_results(&results);

@@ -1,0 +1,86 @@
+# Meepo — Cursor Rules
+
+## Project
+
+Meepo is a local AI agent for macOS and Windows that connects Claude to your digital life. Rust workspace, 7 crates, 75+ tools, Rust 2024 edition.
+
+## Build & Test
+
+```bash
+cargo build                    # Build all crates
+cargo test --workspace         # Run all tests
+cargo test -p meepo-core       # Single crate
+cargo clippy --workspace       # Lint
+```
+
+## Code Conventions
+
+### Rust Style
+- Rust 2024 edition — use `let` chains, `if let` chains where appropriate
+- `anyhow::Result` for application code, `thiserror` for library error types
+- `tracing` macros for logging: `debug!`, `info!`, `warn!`, `error!` — never `println!` in library code
+- `async_trait` for async trait methods
+- `serde` with `#[serde(default)]` for optional config fields
+- Prefer `Arc<T>` for shared ownership across async tasks
+
+### Tool Implementation
+- All tools implement `ToolHandler` trait: `name()`, `description()`, `input_schema()`, `execute()`
+- Use `json_schema()` helper from `crate::tools` for input schemas
+- Return `anyhow::Result<String>` — the string is what Claude sees
+- Register tools in both `cmd_start()` and `cmd_mcp_server()` in `main.rs`
+- Validate all inputs: check string lengths, sanitize paths, reject invalid characters
+- Use `tokio::time::timeout()` for external commands (30-300s depending on operation)
+
+### Security
+- Never hardcode API keys — use `${ENV_VAR}` syntax in config
+- Structs holding secrets get custom `Debug` impls, not `#[derive(Debug)]`
+- Validate file paths against allowed directories
+- Sanitize branch names, command arguments
+- Block path traversal (`..`) and SSRF (private IPs)
+
+### Platform Code
+- OS-specific code behind traits in `meepo-core::platform`
+- Gate with `#[cfg(target_os = "macos")]` / `#[cfg(target_os = "windows")]`
+- Factory functions return `Box<dyn Trait>`
+- Cross-platform tools (clipboard, app launch) use `arboard` and `open` crates
+
+### Architecture
+- `meepo-cli` → `meepo-core`, `meepo-channels`, `meepo-knowledge`, `meepo-scheduler`, `meepo-mcp`, `meepo-a2a`
+- Leaf crates (`meepo-knowledge`, `meepo-scheduler`) have no internal dependencies
+- Channel adapters implement `MessageChannel` trait
+- `MessageBus` splits into receiver + `Arc<BusSender>`
+- `CancellationToken` for graceful shutdown across all spawned tasks
+
+### Testing
+- Unit tests in the same file (`#[cfg(test)] mod tests`)
+- Test tool schemas, required fields, error cases, and basic execution
+- Use `tokio::test` for async tests
+- Temp dirs for database tests
+
+## File Structure
+
+- `crates/meepo-cli/src/main.rs` — CLI, daemon startup, tool registration (~3000 lines)
+- `crates/meepo-cli/src/config.rs` — All config structs and TOML loading
+- `crates/meepo-core/src/tools/` — All tool implementations
+- `crates/meepo-core/src/platform/` — OS abstraction layer
+- `crates/meepo-core/src/autonomy/` — Autonomous agent loop
+- `config/default.toml` — Default config template (heavily commented)
+
+## Common Tasks
+
+### Adding a new tool
+1. Create struct in `crates/meepo-core/src/tools/`
+2. Implement `ToolHandler`
+3. Register in `main.rs` `cmd_start()` AND `cmd_mcp_server()`
+4. Add tests
+
+### Adding a new channel
+1. Create adapter in `crates/meepo-channels/src/`
+2. Implement `MessageChannel` trait
+3. Add config struct in `config.rs`
+4. Register in `main.rs` `cmd_start()`
+
+### Adding a config option
+1. Add field to struct in `config.rs` with `#[serde(default = "...")]`
+2. Add default function
+3. Document in `config/default.toml`

@@ -903,6 +903,10 @@ end tell
         let output_path = path
             .map(|p| p.to_string())
             .unwrap_or_else(|| format!("/tmp/meepo-browser-screenshot-{}.png", timestamp));
+
+        // Validate path to prevent writing to sensitive locations (H-3 fix)
+        validate_screenshot_path(&output_path)?;
+
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             Command::new("screencapture")
@@ -936,25 +940,12 @@ end tell
         Ok(())
     }
 
-    async fn get_cookies(&self, tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
-        let raw = self.execute_javascript(tab_id, "document.cookie").await?;
-        let cookies = raw
-            .split(';')
-            .filter_map(|c| {
-                let parts: Vec<&str> = c.splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    Some(BrowserCookie {
-                        name: parts[0].trim().to_string(),
-                        value: parts[1].trim().to_string(),
-                        domain: String::new(),
-                        path: "/".to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        Ok(cookies)
+    async fn get_cookies(&self, _tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
+        // Cookie access disabled for security — document.cookie bypasses the
+        // browser_execute_js blocklist (H-4 fix)
+        Err(anyhow::anyhow!(
+            "Cookie access is disabled for security. Use browser_execute_js with appropriate permissions instead."
+        ))
     }
 
     async fn get_page_url(&self, tab_id: Option<&str>) -> Result<String> {
@@ -1160,6 +1151,10 @@ end tell
         let output_path = path
             .map(|p| p.to_string())
             .unwrap_or_else(|| format!("/tmp/meepo-browser-screenshot-{}.png", timestamp));
+
+        // Validate path to prevent writing to sensitive locations (H-3 fix)
+        validate_screenshot_path(&output_path)?;
+
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             Command::new("screencapture")
@@ -1193,25 +1188,12 @@ end tell
         Ok(())
     }
 
-    async fn get_cookies(&self, tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
-        let raw = self.execute_javascript(tab_id, "document.cookie").await?;
-        let cookies = raw
-            .split(';')
-            .filter_map(|c| {
-                let parts: Vec<&str> = c.splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    Some(BrowserCookie {
-                        name: parts[0].trim().to_string(),
-                        value: parts[1].trim().to_string(),
-                        domain: String::new(),
-                        path: "/".to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        Ok(cookies)
+    async fn get_cookies(&self, _tab_id: Option<&str>) -> Result<Vec<BrowserCookie>> {
+        // Cookie access disabled for security — document.cookie bypasses the
+        // browser_execute_js blocklist (H-4 fix)
+        Err(anyhow::anyhow!(
+            "Cookie access is disabled for security. Use browser_execute_js with appropriate permissions instead."
+        ))
     }
 
     async fn get_page_url(&self, tab_id: Option<&str>) -> Result<String> {

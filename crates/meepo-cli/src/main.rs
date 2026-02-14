@@ -55,6 +55,17 @@ enum Commands {
     /// Run as an MCP server (STDIO transport)
     McpServer,
 
+    /// Show AI usage statistics and costs
+    Usage {
+        /// Time period: 'today', 'month', or 'YYYY-MM-DD:YYYY-MM-DD'
+        #[arg(default_value = "today")]
+        period: String,
+
+        /// Export as CSV instead of table
+        #[arg(long)]
+        csv: bool,
+    },
+
     /// Manage agent templates
     Template {
         #[command(subcommand)]
@@ -113,6 +124,7 @@ async fn main() -> Result<()> {
         Commands::Stop => cmd_stop().await,
         Commands::Ask { message } => cmd_ask(&cli.config, &message).await,
         Commands::McpServer => cmd_mcp_server(&cli.config).await,
+        Commands::Usage { period, csv } => cmd_usage(&cli.config, &period, csv).await,
         Commands::Template { action } => cmd_template(action).await,
     }
 }
@@ -1428,6 +1440,38 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         }
     }
 
+    // ── Usage Tracker ──────────────────────────────────────────────
+    let usage_tracker = if cfg.usage.enabled {
+        let mut model_prices = std::collections::HashMap::new();
+        for (name, price) in &cfg.usage.model_prices {
+            model_prices.insert(
+                name.clone(),
+                meepo_core::usage::ModelPricing {
+                    input_per_mtok: price.input_per_mtok,
+                    output_per_mtok: price.output_per_mtok,
+                    cache_read_per_mtok: price.cache_read_per_mtok,
+                    cache_write_per_mtok: price.cache_write_per_mtok,
+                },
+            );
+        }
+        let usage_config = meepo_core::usage::UsageConfig {
+            enabled: true,
+            daily_budget_usd: cfg.usage.daily_budget_usd,
+            monthly_budget_usd: cfg.usage.monthly_budget_usd,
+            warn_at_percent: cfg.usage.warn_at_percent as u32,
+            model_prices,
+        };
+        let tracker = Arc::new(meepo_core::usage::UsageTracker::new(db.clone(), usage_config));
+        registry.register(Arc::new(
+            meepo_core::tools::usage_stats::GetUsageStatsTool::new(tracker.clone()),
+        ));
+        info!("Usage tracking enabled");
+        Some(tracker)
+    } else {
+        info!("Usage tracking disabled");
+        None
+    };
+
     info!("Total tools registered: {}", registry.len());
 
     // Initialize agent
@@ -1437,13 +1481,17 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         "registry slot already set"
     );
 
-    let agent = Arc::new(meepo_core::agent::Agent::new(
+    let mut agent = meepo_core::agent::Agent::new(
         api,
         registry.clone(),
         soul,
         memory,
         db.clone(),
-    ));
+    );
+    if let Some(ref tracker) = usage_tracker {
+        agent = agent.with_usage_tracker(tracker.clone());
+    }
+    let agent = Arc::new(agent);
 
     // Initialize watcher scheduler
     let (watcher_event_tx, mut watcher_event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1502,6 +1550,7 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         let slack = meepo_channels::slack::SlackChannel::new(
             shellexpand_str(&cfg.channels.slack.bot_token),
             std::time::Duration::from_secs(cfg.channels.slack.poll_interval_secs),
+            cfg.channels.slack.allowed_users.clone(),
         );
         bus.register(Box::new(slack));
         info!("Slack channel registered");
@@ -2063,6 +2112,8 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         tick_interval_secs: cfg.autonomy.tick_interval_secs,
         max_goals: cfg.autonomy.max_goals,
         send_acknowledgments: cfg.autonomy.send_acknowledgments,
+        daily_plan_hour: cfg.autonomy.daily_plan_hour,
+        max_calls_per_minute: cfg.autonomy.max_calls_per_minute,
     };
 
     let auto_loop = meepo_core::autonomy::AutonomousLoop::new(
@@ -2405,6 +2456,122 @@ async fn cmd_ask(config_path: &Option<PathBuf>, message: &str) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_usage(config_path: &Option<PathBuf>, period: &str, csv: bool) -> Result<()> {
+    let cfg = MeepoConfig::load(config_path)?;
+
+    let db_path = shellexpand(&cfg.knowledge.db_path);
+    if !db_path.exists() {
+        bail!("Knowledge database not found at {}. Run `meepo start` first.", db_path.display());
+    }
+
+    let db = Arc::new(
+        meepo_knowledge::KnowledgeDb::new(&db_path)
+            .context("Failed to open knowledge database")?,
+    );
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let (start, end) = match period {
+        "today" => (today.clone(), today),
+        "month" => {
+            let now = chrono::Utc::now();
+            let first_of_month = format!(
+                "{}-{:02}-01",
+                now.format("%Y"),
+                now.format("%m")
+            );
+            let today = now.format("%Y-%m-%d").to_string();
+            (first_of_month, today)
+        }
+        other if other.contains(':') => {
+            let parts: Vec<&str> = other.splitn(2, ':').collect();
+            if parts.len() != 2 {
+                bail!("Invalid date range format. Use 'YYYY-MM-DD:YYYY-MM-DD'");
+            }
+            (parts[0].to_string(), parts[1].to_string())
+        }
+        _ => bail!("Invalid period '{}'. Use 'today', 'month', or 'YYYY-MM-DD:YYYY-MM-DD'", period),
+    };
+
+    if csv {
+        let csv_data = db.export_usage_csv(&start, &end).await?;
+        print!("{}", csv_data);
+        return Ok(());
+    }
+
+    let summary = db.get_usage_summary(&start, &end).await?;
+
+    println!();
+    println!("  Meepo Usage Report");
+    println!("  ══════════════════");
+    println!();
+    println!("  Period:        {}", summary.period);
+    println!("  API Calls:     {}", summary.total_api_calls);
+    println!("  Input Tokens:  {}", summary.total_input_tokens);
+    println!("  Output Tokens: {}", summary.total_output_tokens);
+    println!("  Tool Calls:    {}", summary.total_tool_calls);
+    println!("  Est. Cost:     ${:.4}", summary.estimated_cost_usd);
+
+    // Budget status
+    if cfg.usage.enabled {
+        let mut model_prices = std::collections::HashMap::new();
+        for (name, price) in &cfg.usage.model_prices {
+            model_prices.insert(
+                name.clone(),
+                meepo_core::usage::ModelPricing {
+                    input_per_mtok: price.input_per_mtok,
+                    output_per_mtok: price.output_per_mtok,
+                    cache_read_per_mtok: price.cache_read_per_mtok,
+                    cache_write_per_mtok: price.cache_write_per_mtok,
+                },
+            );
+        }
+        let usage_config = meepo_core::usage::UsageConfig {
+            enabled: true,
+            daily_budget_usd: cfg.usage.daily_budget_usd,
+            monthly_budget_usd: cfg.usage.monthly_budget_usd,
+            warn_at_percent: cfg.usage.warn_at_percent as u32,
+            model_prices,
+        };
+        let tracker = meepo_core::usage::UsageTracker::new(db.clone(), usage_config);
+        match tracker.check_budget().await {
+            Ok(status) => println!("  Budget:        {}", status),
+            Err(e) => println!("  Budget:        (check failed: {})", e),
+        }
+    }
+
+    if !summary.by_source.is_empty() {
+        println!();
+        println!("  By Source:");
+        for (source, usage) in &summary.by_source {
+            println!(
+                "    {:<15} {:>5} calls  {:>8} tokens  ${:.4}",
+                source,
+                usage.api_calls,
+                usage.input_tokens + usage.output_tokens,
+                usage.estimated_cost_usd
+            );
+        }
+    }
+
+    if !summary.by_model.is_empty() {
+        println!();
+        println!("  By Model:");
+        for (model, usage) in &summary.by_model {
+            println!(
+                "    {:<30} {:>5} calls  {:>8} tokens  ${:.4}",
+                model,
+                usage.api_calls,
+                usage.input_tokens + usage.output_tokens,
+                usage.estimated_cost_usd
+            );
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
 async fn cmd_mcp_server(config_path: &Option<PathBuf>) -> Result<()> {
     let cfg = MeepoConfig::load(config_path)?;
 
@@ -2690,6 +2857,33 @@ async fn cmd_mcp_server(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(
         meepo_core::tools::lifestyle::social::SuggestFollowupsTool::new(db.clone()),
     ));
+
+    // ── Usage Tracker (MCP mode) ────────────────────────────────────
+    if cfg.usage.enabled {
+        let mut model_prices = std::collections::HashMap::new();
+        for (name, price) in &cfg.usage.model_prices {
+            model_prices.insert(
+                name.clone(),
+                meepo_core::usage::ModelPricing {
+                    input_per_mtok: price.input_per_mtok,
+                    output_per_mtok: price.output_per_mtok,
+                    cache_read_per_mtok: price.cache_read_per_mtok,
+                    cache_write_per_mtok: price.cache_write_per_mtok,
+                },
+            );
+        }
+        let usage_config = meepo_core::usage::UsageConfig {
+            enabled: true,
+            daily_budget_usd: cfg.usage.daily_budget_usd,
+            monthly_budget_usd: cfg.usage.monthly_budget_usd,
+            warn_at_percent: cfg.usage.warn_at_percent as u32,
+            model_prices,
+        };
+        let tracker = Arc::new(meepo_core::usage::UsageTracker::new(db.clone(), usage_config));
+        registry.register(Arc::new(
+            meepo_core::tools::usage_stats::GetUsageStatsTool::new(tracker),
+        ));
+    }
 
     // Load skills if enabled
     if cfg.skills.enabled {

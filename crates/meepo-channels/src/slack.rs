@@ -21,6 +21,9 @@ pub struct SlackChannel {
     bot_token: String,
     poll_interval: Duration,
     bot_user_id: Arc<RwLock<Option<String>>>,
+    /// Slack user IDs allowed to interact with the agent.
+    /// Empty means all users are allowed (open access).
+    allowed_users: Vec<String>,
     /// Maps Slack user_id -> DM channel_id for routing replies
     channel_map: Arc<DashMap<String, String>>,
     /// Maps original message_id -> (channel_id, message_ts) for pending ack messages
@@ -34,11 +37,13 @@ impl SlackChannel {
     /// # Arguments
     /// * `bot_token` - Slack bot token (starts with xoxb-)
     /// * `poll_interval` - How often to poll for new messages
-    pub fn new(bot_token: String, poll_interval: Duration) -> Self {
+    /// * `allowed_users` - Slack user IDs allowed to interact (empty = all allowed)
+    pub fn new(bot_token: String, poll_interval: Duration, allowed_users: Vec<String>) -> Self {
         Self {
             bot_token,
             poll_interval,
             bot_user_id: Arc::new(RwLock::new(None)),
+            allowed_users,
             channel_map: Arc::new(DashMap::new()),
             pending_acks: Arc::new(DashMap::new()),
         }
@@ -205,6 +210,7 @@ impl MessageChannel for SlackChannel {
         let poll_interval = self.poll_interval;
         let channel_map = self.channel_map.clone();
         let bot_uid = bot_user_id;
+        let allowed_users = self.allowed_users.clone();
         let rate_limiter = RateLimiter::new(10, Duration::from_secs(60));
 
         // Spawn polling task (safe: all initialization is complete)
@@ -304,6 +310,15 @@ impl MessageChannel for SlackChannel {
                             continue;
                         }
 
+                        // Check user authorization (M-3 fix)
+                        if !allowed_users.is_empty() && !allowed_users.contains(&user.to_string()) {
+                            debug!("Ignoring Slack message from unauthorized user: {}", user);
+                            if ts > max_ts.as_str() {
+                                max_ts = ts.to_string();
+                            }
+                            continue;
+                        }
+
                         // Skip empty messages
                         if text.is_empty() {
                             continue;
@@ -350,7 +365,7 @@ impl MessageChannel for SlackChannel {
                             timestamp: Utc::now(),
                         };
 
-                        info!("Forwarding Slack message from {}: {}", user, text);
+                        info!("Forwarding Slack message from {} ({} chars)", user, text.len());
 
                         if let Err(e) = tx.send(incoming).await {
                             error!("Failed to send Slack message to bus: {}", e);
@@ -456,13 +471,13 @@ mod tests {
 
     #[test]
     fn test_slack_channel_creation() {
-        let channel = SlackChannel::new("xoxb-test-token".to_string(), Duration::from_secs(3));
+        let channel = SlackChannel::new("xoxb-test-token".to_string(), Duration::from_secs(3), Vec::new());
         assert!(matches!(channel.channel_type(), ChannelType::Slack));
     }
 
     #[tokio::test]
     async fn test_slack_empty_token() {
-        let channel = SlackChannel::new(String::new(), Duration::from_secs(3));
+        let channel = SlackChannel::new(String::new(), Duration::from_secs(3), Vec::new());
         let (tx, _rx) = mpsc::channel(10);
         let result = channel.start(tx).await;
         assert!(result.is_err());
@@ -470,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_slack_send_no_channels() {
-        let channel = SlackChannel::new("xoxb-test".to_string(), Duration::from_secs(3));
+        let channel = SlackChannel::new("xoxb-test".to_string(), Duration::from_secs(3), Vec::new());
         let msg = OutgoingMessage {
             content: "test".to_string(),
             channel: ChannelType::Slack,

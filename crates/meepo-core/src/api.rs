@@ -8,6 +8,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::tools::ToolExecutor;
+use crate::usage::AccumulatedUsage;
 
 /// Anthropic API client
 #[derive(Clone)]
@@ -138,7 +139,7 @@ impl ApiClient {
         system: &str,
         tools: &[ToolDefinition],
         tool_executor: &dyn ToolExecutor,
-    ) -> Result<String> {
+    ) -> Result<(String, AccumulatedUsage)> {
         tokio::time::timeout(
             Duration::from_secs(300),
             self.run_tool_loop_inner(initial_message, system, tools, tool_executor),
@@ -153,8 +154,10 @@ impl ApiClient {
         system: &str,
         tools: &[ToolDefinition],
         tool_executor: &dyn ToolExecutor,
-    ) -> Result<String> {
+    ) -> Result<(String, AccumulatedUsage)> {
         const MAX_TOOL_OUTPUT: usize = 100_000;
+
+        let mut accumulated = AccumulatedUsage::new();
 
         let mut conversation: Vec<ApiMessage> = vec![ApiMessage {
             role: "user".to_string(),
@@ -175,6 +178,9 @@ impl ApiClient {
 
             let response = self.chat(&conversation, tools, system).await?;
 
+            // Accumulate token usage from this API call
+            accumulated.add(response.usage.input_tokens, response.usage.output_tokens);
+
             // Build assistant message from response content blocks
             let assistant_message = ApiMessage {
                 role: "assistant".to_string(),
@@ -192,6 +198,9 @@ impl ApiClient {
                     for block in &response.content {
                         if let ContentBlock::ToolUse { id, name, input } = block {
                             info!("Executing tool: {}", name);
+
+                            // Track tool call in accumulated usage
+                            accumulated.record_tool_call(name);
 
                             let result = tool_executor.execute(name, input.clone()).await;
 
@@ -230,7 +239,8 @@ impl ApiClient {
                     // Continue loop to process next response
                 }
                 Some("end_turn") | None => {
-                    debug!("Tool loop completed");
+                    debug!("Tool loop completed (iterations: {}, tokens: in={} out={})",
+                        iterations, accumulated.input_tokens, accumulated.output_tokens);
 
                     // Extract final text response
                     let mut final_text = String::new();
@@ -247,7 +257,7 @@ impl ApiClient {
                         return Err(anyhow!("No text response from assistant"));
                     }
 
-                    return Ok(final_text);
+                    return Ok((final_text, accumulated));
                 }
                 Some(other) => {
                     warn!("Unexpected stop_reason: {}", other);
@@ -255,6 +265,11 @@ impl ApiClient {
                 }
             }
         }
+    }
+
+    /// Get the model name (for usage tracking)
+    pub fn model(&self) -> &str {
+        &self.model
     }
 }
 

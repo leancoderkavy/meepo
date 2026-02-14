@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::types::{ChannelType, MessageKind, OutgoingMessage};
 
 /// Which kind of event triggered this notification
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NotifyEvent {
     TaskStarted {
         task_id: String,
@@ -38,6 +38,17 @@ pub enum NotifyEvent {
     Error {
         context: String,
         error: String,
+    },
+    BudgetWarning {
+        period: String,
+        spent: f64,
+        budget: f64,
+        percent: f64,
+    },
+    BudgetExceeded {
+        period: String,
+        spent: f64,
+        budget: f64,
     },
     DigestMorning {
         summary: String,
@@ -149,6 +160,7 @@ impl NotificationService {
             NotifyEvent::WatcherTriggered { .. } => self.config.on_watcher_triggered,
             NotifyEvent::AutonomousAction { .. } => self.config.on_autonomous_action,
             NotifyEvent::Error { .. } => self.config.on_error,
+            NotifyEvent::BudgetWarning { .. } | NotifyEvent::BudgetExceeded { .. } => true,
             NotifyEvent::DigestMorning { .. } | NotifyEvent::DigestEvening { .. } => true,
         }
     }
@@ -230,6 +242,27 @@ impl NotificationService {
                     "⚠️ Error: {}\n{}",
                     truncate(context, 100),
                     truncate(error, 300)
+                )
+            }
+            NotifyEvent::BudgetWarning {
+                period,
+                spent,
+                budget,
+                percent,
+            } => {
+                format!(
+                    "💰 Budget warning: {} spending at {:.0}% (${:.2} of ${:.2})",
+                    period, percent, spent, budget
+                )
+            }
+            NotifyEvent::BudgetExceeded {
+                period,
+                spent,
+                budget,
+            } => {
+                format!(
+                    "🚨 Budget EXCEEDED: {} spending ${:.2} of ${:.2} limit. API calls paused.",
+                    period, spent, budget
                 )
             }
             NotifyEvent::DigestMorning { summary } => {

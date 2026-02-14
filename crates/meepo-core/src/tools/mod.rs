@@ -21,6 +21,7 @@ pub mod memory;
 pub mod rag;
 pub mod search;
 pub mod system;
+pub mod usage_stats;
 pub mod watchers;
 
 /// Trait for executing tools
@@ -41,7 +42,7 @@ pub trait ToolHandler: Send + Sync {
 
 /// Registry of available tools
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn ToolHandler>>,
+    tools: HashMap<Arc<str>, Arc<dyn ToolHandler>>,
 }
 
 impl ToolRegistry {
@@ -54,14 +55,14 @@ impl ToolRegistry {
 
     /// Register a tool handler
     pub fn register(&mut self, handler: Arc<dyn ToolHandler>) {
-        let name = handler.name().to_string();
+        let name: Arc<str> = Arc::from(handler.name());
         debug!("Registering tool: {}", name);
         self.tools.insert(name, handler);
     }
 
     /// Get a tool by name
     pub fn get(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
-        self.tools.get(name).cloned()
+        self.tools.get(name as &str).cloned()
     }
 
     /// Number of registered tools
@@ -78,7 +79,7 @@ impl ToolRegistry {
     pub fn filter_tools(&self, names: &[String]) -> Vec<ToolDefinition> {
         names
             .iter()
-            .filter_map(|name| self.tools.get(name))
+            .filter_map(|name| self.tools.get(name.as_str()))
             .map(|handler| ToolDefinition {
                 name: handler.name().to_string(),
                 description: handler.description().to_string(),

@@ -19,7 +19,6 @@ Thumbs.db
 .env.*
 
 # Claude Code internal files
-CLAUDE.md
 .claude/
 
 # Internal development plans

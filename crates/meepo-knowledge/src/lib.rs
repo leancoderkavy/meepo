@@ -28,8 +28,8 @@ pub use graph_rag::{
 };
 pub use memory_sync::{load_memory, load_soul, save_memory};
 pub use sqlite::{
-    ActionLogEntry, BackgroundTask, Conversation, Entity, Goal, KnowledgeDb, Relationship,
-    UserPreference, Watcher,
+    ActionLogEntry, BackgroundTask, Conversation, Entity, Goal, KnowledgeDb, ModelUsage,
+    Relationship, SourceUsage, UsageSummary, UserPreference, Watcher,
 };
 pub use tantivy::{SearchResult, TantivyIndex};
 

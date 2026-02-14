@@ -290,6 +290,8 @@ preference_decay_days = 30    # confidence decay period
 min_confidence_to_act = 0.5   # below this, ask user first
 max_tokens_per_tick = 4096    # budget per think phase
 send_acknowledgments = true   # send typing/ack indicators before processing
+daily_plan_hour = 7           # hour (0-23 UTC) to generate daily morning briefing
+max_calls_per_minute = 10     # rate limit for autonomous API calls (0 = unlimited)
 
 
 # ── Notifications ───────────────────────────────────────────────
@@ -377,6 +379,31 @@ allowed_tools = []              # tools available to incoming A2A tasks
 [skills]
 enabled = false
 dir = "~/.meepo/skills"
+
+
+# ── Usage & Cost Tracking ───────────────────────────────────────
+# Track token usage, estimate costs, and enforce budgets.
+# All data is stored in the knowledge database (usage_log table).
+
+[usage]
+enabled = true
+# daily_budget_usd = 10.00            # Hard stop — refuse requests when exceeded
+# monthly_budget_usd = 100.00         # Hard stop — refuse requests when exceeded
+warn_at_percent = 80                   # Notify user when approaching budget limit
+
+# Model pricing (per million tokens, USD)
+# Update these when Anthropic changes pricing.
+[usage.model_prices.claude-opus-4-6]
+input_per_mtok = 15.0
+output_per_mtok = 75.0
+cache_read_per_mtok = 1.5
+cache_write_per_mtok = 18.75
+
+[usage.model_prices.claude-sonnet-4-5-20250929]
+input_per_mtok = 3.0
+output_per_mtok = 15.0
+cache_read_per_mtok = 0.3
+cache_write_per_mtok = 3.75
 
 
 # ── Lifestyle Integrations ──────────────────────────────────────

@@ -156,6 +156,13 @@ impl ToolHandler for RunCommandTool {
         }
 
         // Allowlist of safe commands
+        //
+        // Security notes — intentionally EXCLUDED:
+        //   env, printenv  — leak all env vars including API keys/tokens (C-1)
+        //   curl, wget     — enable data exfiltration, bypass SSRF protection (C-2)
+        //   osascript       — bypasses browser JS blocklist & AppleScript sanitization (H-2)
+        //   python*, node, ruby — arbitrary code execution via interpreters (M-5)
+        //   defaults        — can modify macOS system preferences
         const ALLOWED_COMMANDS: &[&str] = &[
             // Read-only / informational
             "ls",
@@ -175,8 +182,6 @@ impl ToolHandler for RunCommandTool {
             "df",
             "uptime",
             "ps",
-            "env",
-            "printenv",
             "hostname",
             "id",
             "groups",
@@ -202,22 +207,16 @@ impl ToolHandler for RunCommandTool {
             "zip",
             "unzip",
             "gzip",
-            // Networking
-            "curl",
-            "wget",
+            // Networking (read-only diagnostics only)
             "ping",
             "dig",
             "nslookup",
-            // Development tools
+            // Development tools (build tools only, no interpreters)
             "git",
-            "python3",
-            "python",
-            "node",
             "npm",
             "npx",
             "cargo",
             "go",
-            "ruby",
             "pip",
             "pip3",
             "make",
@@ -225,8 +224,6 @@ impl ToolHandler for RunCommandTool {
             "brew",
             // macOS utilities
             "open",
-            "osascript",
-            "defaults",
             "pbcopy",
             "pbpaste",
             "say",
@@ -509,8 +506,19 @@ fn is_private_ip(ip: &std::net::IpAddr) -> Option<&'static str> {
     }
 }
 
-/// Check if a URL is safe to fetch (SSRF protection)
-fn is_safe_url(url_str: &str) -> Result<()> {
+/// Validated URL info returned by `validate_url`.
+/// Contains the resolved IPs so callers can pin them in reqwest,
+/// eliminating the TOCTOU gap between DNS check and HTTP request.
+struct ValidatedUrl {
+    host: String,
+    resolved_ips: Vec<std::net::SocketAddr>,
+}
+
+/// Check if a URL is safe to fetch (SSRF protection).
+///
+/// Returns resolved socket addresses so the caller can pin them in the HTTP
+/// client, preventing DNS rebinding between validation and the actual request.
+fn validate_url(url_str: &str) -> Result<ValidatedUrl> {
     use std::net::IpAddr;
 
     let url = url::Url::parse(url_str).context("Invalid URL format")?;
@@ -541,31 +549,44 @@ fn is_safe_url(url_str: &str) -> Result<()> {
         return Err(anyhow::anyhow!("Access to {} is not allowed", reason));
     }
 
-    // DNS rebinding mitigation: resolve the hostname and validate all resolved IPs.
-    // This prevents attacks where a domain first resolves to a public IP (passing the
-    // hostname check above) then resolves to 127.0.0.1 when the actual request is made.
     let port = url.port_or_known_default().unwrap_or(80);
-    let resolve_target = format!("{}:{}", host, port);
-    if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&resolve_target) {
-        for addr in addrs {
-            if let Some(reason) = is_private_ip(&addr.ip()) {
-                warn!(
-                    "DNS rebinding detected: {} resolved to {} ({})",
-                    host,
-                    addr.ip(),
-                    reason
-                );
-                return Err(anyhow::anyhow!(
-                    "Access denied: hostname '{}' resolved to {} ({})",
-                    host,
-                    addr.ip(),
-                    reason
-                ));
-            }
-        }
-    }
 
-    Ok(())
+    // DNS rebinding mitigation: resolve the hostname, validate all resolved IPs,
+    // and return them so the caller can pin them in the HTTP client.
+    let resolve_target = format!("{}:{}", host, port);
+    let resolved: Vec<std::net::SocketAddr> =
+        if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&resolve_target) {
+            let addrs: Vec<_> = addrs.collect();
+            for addr in &addrs {
+                if let Some(reason) = is_private_ip(&addr.ip()) {
+                    warn!(
+                        "DNS rebinding detected: {} resolved to {} ({})",
+                        host,
+                        addr.ip(),
+                        reason
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Access denied: hostname '{}' resolved to {} ({})",
+                        host,
+                        addr.ip(),
+                        reason
+                    ));
+                }
+            }
+            addrs
+        } else {
+            Vec::new()
+        };
+
+    Ok(ValidatedUrl {
+        host: host.to_string(),
+        resolved_ips: resolved,
+    })
+}
+
+/// Convenience wrapper that discards resolved IPs (for redirect checks, etc.)
+fn is_safe_url(url_str: &str) -> Result<()> {
+    validate_url(url_str).map(|_| ())
 }
 
 /// Fetch URL content — tries Tavily Extract for clean content, falls back to raw fetch
@@ -627,8 +648,8 @@ impl ToolHandler for BrowseUrlTool {
 
         debug!("Fetching URL: {}", url);
 
-        // Validate URL for SSRF protection (applies to both paths)
-        is_safe_url(url)?;
+        // Validate URL for SSRF protection and resolve DNS once (applies to both paths)
+        let validated = validate_url(url)?;
 
         // Try Tavily Extract first for clean content
         if let Some(tavily) = &self.tavily {
@@ -654,19 +675,36 @@ impl ToolHandler for BrowseUrlTool {
             }
         }
 
-        // Fallback: raw fetch with redirect following
-        self.raw_fetch(url, &input).await
+        // Fallback: raw fetch with redirect following, pinning resolved IPs
+        self.raw_fetch(url, &input, &validated).await
     }
 }
 
 impl BrowseUrlTool {
-    async fn raw_fetch(&self, url: &str, input: &Value) -> Result<String> {
-        let client = reqwest::Client::builder()
+    async fn raw_fetch(&self, url: &str, input: &Value, validated: &ValidatedUrl) -> Result<String> {
+        // Pin resolved IPs in the client to prevent DNS rebinding (H-1 fix).
+        // This ensures reqwest uses the same IPs we already validated.
+        let mut builder = reqwest::Client::builder()
             .user_agent("meepo-agent/1.0")
             .timeout(std::time::Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .context("Failed to create HTTP client")?;
+            .redirect(reqwest::redirect::Policy::none());
+
+        for addr in &validated.resolved_ips {
+            builder = builder.resolve(&validated.host, *addr);
+        }
+
+        let client = builder.build().context("Failed to create HTTP client")?;
+
+        // Headers that must not be overridden by user input (M-7 fix)
+        const BLOCKED_HEADERS: &[&str] = &[
+            "authorization",
+            "cookie",
+            "host",
+            "x-forwarded-for",
+            "x-real-ip",
+            "proxy-authorization",
+            "set-cookie",
+        ];
 
         let mut current_url = url.to_string();
         let mut redirects = 0;
@@ -684,6 +722,10 @@ impl BrowseUrlTool {
                             || value_str.contains('\n')
                         {
                             warn!("Skipping header '{}' due to CRLF characters", key);
+                            continue;
+                        }
+                        if BLOCKED_HEADERS.contains(&key.to_lowercase().as_str()) {
+                            warn!("Skipping blocked sensitive header '{}'", key);
                             continue;
                         }
                         request = request.header(key, value_str);

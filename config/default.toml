@@ -20,6 +20,19 @@ memory_file = "MEMORY.md"
 api_key = "${ANTHROPIC_API_KEY}"
 base_url = "https://api.anthropic.com"
 
+# ── Ollama (optional — local/self-hosted LLMs) ──────────────────
+# Run Ollama locally: https://ollama.ai
+# 1. Install Ollama: curl -fsSL https://ollama.ai/install.sh | sh
+# 2. Pull a model: ollama pull llama3.2
+# 3. Start server: ollama serve (runs on http://localhost:11434)
+#
+# To use Ollama instead of Anthropic, set agent.default_model to "ollama"
+# and configure the model name below.
+
+[providers.ollama]
+base_url = "http://localhost:11434"    # Ollama server URL
+model = "llama3.2"                      # Model name (llama3.2, mistral, codellama, etc.)
+
 # ── Tavily (optional — web search) ──────────────────────────────
 # Get key → https://app.tavily.com/home  (free tier, no card)
 # export TAVILY_API_KEY="tvly-..."

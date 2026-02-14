@@ -159,8 +159,18 @@ This walks you through API keys, macOS permissions (Accessibility, Full Disk Acc
 # Initialize config (creates ~/.meepo/)
 cargo run -- init
 
-# Set API key
+# Set API key (for Anthropic)
 export ANTHROPIC_API_KEY="sk-ant-..."
+
+# OR use Ollama (local models, no API key needed)
+# 1. Install Ollama: curl -fsSL https://ollama.ai/install.sh | sh
+# 2. Pull a model: ollama pull llama3.2
+# 3. Edit ~/.meepo/config.toml:
+#    [agent]
+#    default_model = "ollama"
+#    [providers.ollama]
+#    base_url = "http://localhost:11434"
+#    model = "llama3.2"
 
 # Start daemon in debug mode
 cargo run -- --debug start

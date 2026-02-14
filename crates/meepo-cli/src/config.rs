@@ -54,6 +54,8 @@ fn default_memory_file() -> String {
 pub struct ProvidersConfig {
     pub anthropic: AnthropicConfig,
     #[serde(default)]
+    pub ollama: Option<OllamaConfig>,
+    #[serde(default)]
     pub tavily: Option<TavilyConfig>,
 }
 
@@ -75,6 +77,22 @@ impl std::fmt::Debug for AnthropicConfig {
 
 fn default_base_url() -> String {
     "https://api.anthropic.com".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "llama3.2".to_string()
 }
 
 #[derive(Clone, Serialize, Deserialize)]

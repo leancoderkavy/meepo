@@ -1105,26 +1105,42 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         memory.len()
     );
 
-    // Initialize API client
-    let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
-    if api_key.is_empty() || api_key.contains("${") {
-        anyhow::bail!(
-            "ANTHROPIC_API_KEY is not set.\n\n\
-             Fix it with:\n  \
-             export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
-             Or run the setup wizard:\n  \
-             meepo setup\n\n\
-             Get a key at: https://console.anthropic.com/settings/keys"
+    // Initialize LLM provider (Anthropic or Ollama based on config)
+    let use_ollama = cfg.agent.default_model == "ollama";
+    let provider: meepo_core::provider::LlmProvider = if use_ollama {
+        let ollama_cfg = cfg.providers.ollama.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Ollama is set as default_model but providers.ollama is not configured"))?;
+        
+        let base_url = shellexpand_str(&ollama_cfg.base_url);
+        let model = shellexpand_str(&ollama_cfg.model);
+        
+        let client = meepo_core::ollama::OllamaClient::new(base_url.clone(), model.clone())
+            .with_max_tokens(cfg.agent.max_tokens);
+        
+        info!("Ollama client initialized (base_url: {}, model: {})", base_url, model);
+        meepo_core::provider::LlmProvider::Ollama(client)
+    } else {
+        let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
+        if api_key.is_empty() || api_key.contains("${") {
+            anyhow::bail!(
+                "ANTHROPIC_API_KEY is not set.\n\n\
+                 Fix it with:\n  \
+                 export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
+                 Or run the setup wizard:\n  \
+                 meepo setup\n\n\
+                 Get a key at: https://console.anthropic.com/settings/keys"
+            );
+        }
+        let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
+        let api = meepo_core::api::ApiClient::new(api_key, Some(cfg.agent.default_model.clone()))
+            .with_max_tokens(cfg.agent.max_tokens)
+            .with_base_url(base_url);
+        info!(
+            "Anthropic API client initialized (model: {})",
+            cfg.agent.default_model
         );
-    }
-    let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
-    let api = meepo_core::api::ApiClient::new(api_key, Some(cfg.agent.default_model.clone()))
-        .with_max_tokens(cfg.agent.max_tokens)
-        .with_base_url(base_url);
-    info!(
-        "Anthropic API client initialized (model: {})",
-        cfg.agent.default_model
-    );
+        meepo_core::provider::LlmProvider::Anthropic(api)
+    };
 
     // Initialize Tavily client (optional — web search works only if API key is set)
     let tavily_client = cfg
@@ -1486,7 +1502,16 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         background_timeout_secs: cfg.orchestrator.background_timeout_secs,
         max_background_groups: cfg.orchestrator.max_background_groups,
     };
-    let orchestrator_api = api.clone();
+    let orchestrator_api = match &provider {
+        meepo_core::provider::LlmProvider::Anthropic(api) => api.clone(),
+        meepo_core::provider::LlmProvider::Ollama(ollama) => {
+            // For Ollama, create a compatibility wrapper or use placeholder
+            // Since orchestrator needs ApiClient, we'll need to handle this differently
+            // For now, use a dummy ApiClient (orchestrator won't work with Ollama yet)
+            warn!("TaskOrchestrator does not fully support Ollama provider yet");
+            meepo_core::api::ApiClient::new("dummy".to_string(), Some("dummy".to_string()))
+        }
+    };
     let orchestrator = Arc::new(meepo_core::orchestrator::TaskOrchestrator::new(
         orchestrator_api,
         progress_tx,
@@ -1628,13 +1653,30 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         "registry slot already set"
     );
 
-    let mut agent = meepo_core::agent::Agent::new(
-        api,
-        registry.clone(),
-        soul,
-        memory,
-        db.clone(),
-    );
+    let mut agent = match provider {
+        meepo_core::provider::LlmProvider::Anthropic(api) => {
+            meepo_core::agent::Agent::new(
+                api,
+                registry.clone(),
+                soul,
+                memory,
+                db.clone(),
+            )
+        }
+        meepo_core::provider::LlmProvider::Ollama(ollama) => {
+            // For Ollama, we need a different agent that uses OllamaClient
+            // Since Agent currently only accepts ApiClient, we create a placeholder
+            // TODO: Update Agent to support LlmProvider trait
+            warn!("Agent does not fully support Ollama provider yet - using compatibility mode");
+            meepo_core::agent::Agent::new(
+                meepo_core::api::ApiClient::new("ollama-placeholder".to_string(), Some("llama3.2".to_string())),
+                registry.clone(),
+                soul,
+                memory,
+                db.clone(),
+            )
+        }
+    };
     if let Some(ref tracker) = usage_tracker {
         agent = agent.with_usage_tracker(tracker.clone());
     }

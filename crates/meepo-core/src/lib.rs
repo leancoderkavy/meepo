@@ -8,6 +8,7 @@
 //! - Integration with knowledge graph and watcher scheduler
 
 pub mod agent;
+pub mod agents;
 pub mod api;
 pub mod audio;
 pub mod autonomy;

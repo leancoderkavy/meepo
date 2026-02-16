@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1A1410"/>
+      <stop offset="100%" style="stop-color:#2A2420"/>
+    </linearGradient>
+    <linearGradient id="hood" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A8AB5"/>
+      <stop offset="100%" style="stop-color:#3B6B8A"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#D4B87A"/>
+      <stop offset="100%" style="stop-color:#C4A265"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#D4A843;stop-opacity:0.6"/>
+      <stop offset="100%" style="stop-color:#D4A843;stop-opacity:0"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="512" cy="512" r="480" fill="url(#bg)" filter="url(#shadow)"/>
+  <circle cx="512" cy="512" r="476" fill="none" stroke="#3B6B8A" stroke-width="3" opacity="0.4"/>
+
+  <!-- Subtle radial glow behind character -->
+  <circle cx="512" cy="480" r="280" fill="url(#glow)"/>
+
+  <!-- Hood / Cloak body -->
+  <path d="M512 180 C380 180 280 280 260 400 C240 520 280 620 340 700 L512 760 L684 700 C744 620 784 520 764 400 C744 280 644 180 512 180Z" fill="url(#hood)" filter="url(#shadow)"/>
+
+  <!-- Hood inner shadow -->
+  <path d="M512 200 C400 200 310 290 290 400 C275 490 300 580 350 650 L512 700 L674 650 C724 580 749 490 734 400 C714 290 624 200 512 200Z" fill="#2D5A75" opacity="0.5"/>
+
+  <!-- Face area -->
+  <ellipse cx="512" cy="440" rx="140" ry="120" fill="url(#skin)"/>
+
+  <!-- Eyes - glowing gold -->
+  <ellipse cx="452" cy="420" rx="28" ry="22" fill="#1A1410"/>
+  <ellipse cx="572" cy="420" rx="28" ry="22" fill="#1A1410"/>
+  <ellipse cx="455" cy="418" rx="16" ry="13" fill="#D4A843"/>
+  <ellipse cx="575" cy="418" rx="16" ry="13" fill="#D4A843"/>
+  <ellipse cx="457" cy="415" rx="6" ry="5" fill="#FFF" opacity="0.8"/>
+  <ellipse cx="577" cy="415" rx="6" ry="5" fill="#FFF" opacity="0.8"/>
+
+  <!-- Nose -->
+  <path d="M505 445 Q512 465 519 445" fill="none" stroke="#8B6914" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Mouth - slight grin -->
+  <path d="M475 475 Q512 500 549 475" fill="none" stroke="#6B4E1B" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Hood edge details -->
+  <path d="M360 300 Q512 240 664 300" fill="none" stroke="#C4A265" stroke-width="3" opacity="0.6"/>
+
+  <!-- Shoulder wraps / cloak folds -->
+  <path d="M300 580 Q400 560 420 620" fill="none" stroke="#2D5A75" stroke-width="4" stroke-linecap="round"/>
+  <path d="M724 580 Q624 560 604 620" fill="none" stroke="#2D5A75" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Shovel (Meepo's signature tool) -->
+  <g transform="rotate(-25, 700, 350)">
+    <!-- Handle -->
+    <rect x="690" y="250" width="12" height="220" rx="4" fill="#8B6914"/>
+    <rect x="692" y="250" width="4" height="220" fill="#A07B1A" opacity="0.4"/>
+    <!-- Blade -->
+    <path d="M670 230 L730 230 L740 200 Q700 170 660 200 Z" fill="#9AA" stroke="#778" stroke-width="2"/>
+    <path d="M680 225 L720 225 L725 210 Q700 195 675 210 Z" fill="#BCC" opacity="0.4"/>
+  </g>
+
+  <!-- Clone indicators (3 small Meepo silhouettes) -->
+  <g opacity="0.35">
+    <!-- Clone 1 -->
+    <circle cx="200" cy="750" r="30" fill="#3B6B8A"/>
+    <circle cx="200" cy="735" r="14" fill="#C4A265"/>
+    <circle cx="195" cy="732" r="3" fill="#D4A843"/>
+    <circle cx="205" cy="732" r="3" fill="#D4A843"/>
+
+    <!-- Clone 2 -->
+    <circle cx="512" cy="820" r="30" fill="#3B6B8A"/>
+    <circle cx="512" cy="805" r="14" fill="#C4A265"/>
+    <circle cx="507" cy="802" r="3" fill="#D4A843"/>
+    <circle cx="517" cy="802" r="3" fill="#D4A843"/>
+
+    <!-- Clone 3 -->
+    <circle cx="824" cy="750" r="30" fill="#3B6B8A"/>
+    <circle cx="824" cy="735" r="14" fill="#C4A265"/>
+    <circle cx="819" cy="732" r="3" fill="#D4A843"/>
+    <circle cx="829" cy="732" r="3" fill="#D4A843"/>
+  </g>
+
+  <!-- Connecting lines from main to clones (divided we stand) -->
+  <line x1="400" y1="700" x2="220" y2="730" stroke="#D4A843" stroke-width="1.5" opacity="0.2" stroke-dasharray="6,4"/>
+  <line x1="512" y1="760" x2="512" y2="800" stroke="#D4A843" stroke-width="1.5" opacity="0.2" stroke-dasharray="6,4"/>
+  <line x1="624" y1="700" x2="804" y2="730" stroke="#D4A843" stroke-width="1.5" opacity="0.2" stroke-dasharray="6,4"/>
+
+  <!-- "M" letter badge at bottom -->
+  <circle cx="512" cy="900" r="42" fill="#1A1410" stroke="#D4A843" stroke-width="2.5"/>
+  <text x="512" y="916" font-family="Georgia, serif" font-size="48" font-weight="bold" fill="#D4A843" text-anchor="middle">M</text>
+</svg>

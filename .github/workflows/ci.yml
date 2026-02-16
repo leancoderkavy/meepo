@@ -11,18 +11,19 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
-  check:
-    name: Check
+  build:
+    name: Build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace
+      - run: cargo build --workspace
 
   test:
     name: Test
     runs-on: macos-latest
+    needs: build
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,18 +51,151 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  check-windows:
-    name: Check (Windows)
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scan for hardcoded API keys, tokens, and secrets in non-test source code.
+      # Uses awk to skip #[cfg(test)] blocks so test fixtures don't cause false positives.
+      - name: Check for hardcoded secrets
+        run: |
+          echo "=== Scanning for hardcoded secrets ==="
+
+          # Helper: scan .rs files outside test modules for a pattern.
+          # Prints matching lines (file:line: content) and returns 0 if any found.
+          scan_rs() {
+            local pattern="$1"
+            find crates/ -name '*.rs' -print0 | xargs -0 awk -v pat="$pattern" '
+              /^#\[cfg\(test/ { in_test = 1 }
+              in_test { next }
+              $0 ~ pat && !/\/\/ / { print FILENAME ":" NR ": " $0 }
+            '
+          }
+
+          # Helper: scan .toml config files for a pattern, excluding ${} placeholders and comments.
+          scan_toml() {
+            local pattern="$1"
+            grep -rn --include='*.toml' "$pattern" config/ 2>/dev/null \
+              | grep -v '[$]{' | grep -v '^#' | grep -v '# ' || true
+          }
+
+          FOUND=0
+
+          # Anthropic keys (sk-ant-api...)
+          if [ -n "$(scan_rs 'sk-ant-api')$(scan_toml 'sk-ant-api')" ]; then
+            echo "::error::Found potential hardcoded Anthropic API key"
+            scan_rs 'sk-ant-api'; scan_toml 'sk-ant-api'
+            FOUND=1
+          fi
+
+          # OpenAI keys (sk- followed by 20+ alphanumeric chars)
+          OPENAI=$(scan_rs 'sk-[a-zA-Z0-9]{20,}' | grep -v 'sk-ant-' | grep -v 'sk-secret-' || true)
+          OPENAI_TOML=$(scan_toml 'sk-[a-zA-Z0-9]\{20,\}' || true)
+          if [ -n "$OPENAI$OPENAI_TOML" ]; then
+            echo "::error::Found potential hardcoded OpenAI API key"
+            echo "$OPENAI"; echo "$OPENAI_TOML"
+            FOUND=1
+          fi
+
+          # Discord bot tokens (24chars.6chars.27chars)
+          if [ -n "$(scan_rs '[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}')" ]; then
+            echo "::error::Found potential hardcoded Discord bot token"
+            FOUND=1
+          fi
+
+          # Slack bot tokens (xoxb-...)
+          if [ -n "$(scan_rs 'xoxb-[0-9]')$(scan_toml 'xoxb-[0-9]')" ]; then
+            echo "::error::Found potential hardcoded Slack bot token"
+            FOUND=1
+          fi
+
+          # Bearer tokens in source (not in auth validation/extraction code)
+          BEARER=$(scan_rs 'Bearer [A-Za-z0-9]' \
+            | grep -v 'strip_prefix' | grep -v 'starts_with' \
+            | grep -v 'extract_bearer' | grep -v 'parse()' \
+            | grep -v 'bearer_auth' || true)
+          if [ -n "$BEARER" ]; then
+            echo "::error::Found potential hardcoded Bearer token"
+            echo "$BEARER"
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No hardcoded secrets found"
+          else
+            exit 1
+          fi
+
+      # Ensure secret-holding structs don't derive Debug (which would leak keys in logs)
+      - name: Check Debug impls on secret structs
+        run: |
+          echo "=== Checking for unsafe Debug derives on secret-holding structs ==="
+          FOUND=0
+
+          # Find structs containing api_key/token/secret fields that use derive(Debug)
+          # We look for derive(Debug) followed by a struct with secret fields within 15 lines
+          for f in $(find crates/ -name '*.rs' -not -path '*/test*'); do
+            # Use awk to detect derive(Debug) on structs with actual secret-value fields
+            awk '
+              /^#\[derive\(.*Debug/ { derive_line = NR }
+              /^pub struct/ && derive_line && (NR - derive_line) <= 3 { struct_name = $3; struct_line = NR; in_struct = 1 }
+              in_struct && /pub .*: / && /api_key|bot_token|auth_token/ && !/\/\// {
+                print FILENAME ":" struct_line ": struct " struct_name " derives Debug but has secret field: " $0
+              }
+              in_struct && /^\}/ { in_struct = 0; derive_line = 0 }
+            ' "$f"
+          done | tee /tmp/debug_check.txt
+
+          if [ -s /tmp/debug_check.txt ]; then
+            echo "::error::Found structs with secret fields using derive(Debug). Use a custom Debug impl that masks secrets."
+            exit 1
+          else
+            echo "All secret-holding structs have safe Debug impls"
+          fi
+
+      # Check that .env files are gitignored
+      - name: Check .gitignore covers secrets
+        run: |
+          echo "=== Checking .gitignore for secret file patterns ==="
+          MISSING=0
+          for pattern in ".env" ".env.*"; do
+            if ! grep -q "$pattern" .gitignore; then
+              echo "::error::.gitignore missing pattern: $pattern"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 0 ]; then
+            echo ".gitignore covers secret file patterns"
+          else
+            exit 1
+          fi
+
+      # Ensure no .env files are checked in
+      - name: Check no .env files committed
+        run: |
+          if find . -name '.env' -o -name '.env.*' | grep -v node_modules | grep -v .git | head -1 | grep -q .; then
+            echo "::error::Found .env file(s) in repository"
+            find . -name '.env' -o -name '.env.*' | grep -v node_modules | grep -v .git
+            exit 1
+          else
+            echo "No .env files found in repository"
+          fi
+
+  build-windows:
+    name: Build (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace
+      - run: cargo build --workspace
 
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
+    needs: build-windows
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -1,116 +1,84 @@
+<div align="center">
+
 # Meepo
 
-A local AI agent for macOS and Windows that connects LLMs to your digital life through Discord, Slack, iMessage, email, and more — with a remote gateway and native iOS companion app. **Divided We Stand.**
+**A local AI agent that connects LLMs to your digital life.**
 
-Meepo runs as a daemon on your machine — a prime agent that splits into clones to be everywhere at once. Channel clones monitor Discord, Slack, iMessage, and email simultaneously. Task clones dig in parallel on complex requests. Watcher clones stand guard over your inbox, calendar, and GitHub repos around the clock. The prime Meepo coordinates them all through an autonomous observe/think/act loop, with access to 75+ tools spanning email, calendar, reminders, notes, browser automation, web search, files, code, music, contacts, and a persistent knowledge graph. It also speaks MCP and A2A protocols — exposing its tools to other AI agents and consuming tools from external MCP servers.
+[![CI](https://github.com/leancoderkavy/meepo/actions/workflows/ci.yml/badge.svg)](https://github.com/leancoderkavy/meepo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2024_edition-orange.svg)](https://www.rust-lang.org/)
+[![macOS](https://img.shields.io/badge/macOS-supported-brightgreen.svg)](#platform-support)
+[![Windows](https://img.shields.io/badge/Windows-supported-brightgreen.svg)](#platform-support)
 
-## Features
+75+ tools · Discord · Slack · iMessage · Email · MCP · A2A · Autonomous Agent Loop
 
-- **Multi-channel messaging** — Discord DMs, Slack DMs, iMessage (macOS), email (macOS), or CLI one-shots
-- **75+ built-in tools** — Email, calendar, reminders, notes, contacts, browser automation, web search, file browsing, code PRs, music control, screen capture, lifestyle integrations (research, tasks, finance, health, travel, social), and more
-- **Autonomous agent loop** — Observe/think/act cycle with goal tracking, proactive actions, and notification alerts
-- **Multiple LLM providers** — Anthropic Claude (API), Ollama (local models), OpenAI, Google Gemini, or any OpenAI-compatible endpoint with automatic failover
-- **Cross-platform** — macOS (AppleScript) and Windows (PowerShell/Outlook COM) with platform abstraction layer
-- **MCP support** — Expose Meepo's tools as an MCP server (STDIO) for Claude Desktop, Cursor, etc. — and consume tools from external MCP servers
-- **A2A protocol** — Google's Agent-to-Agent protocol for delegating tasks to/from peer AI agents over HTTP
-- **Clone delegation** — Spawns focused Meepo clones that dig in parallel on complex tasks, or work in the background and report back when done
-- **Browser automation** — Full Safari and Chrome control — tabs, navigation, JS execution, form filling, screenshots
-- **Web search** — Search the web and extract clean content from URLs via Tavily
-- **Knowledge graph** — Remembers entities, relationships, and conversations across sessions with Tantivy full-text search
-- **Scheduled watchers** — Monitor email, calendar, GitHub events, files, or run cron tasks
-- **Agent templates** — Swap personalities, goals, and config overlays with `meepo template use`
-- **Skills system** — Import OpenClaw-compatible SKILL.md files as additional tools
-- **Proactive notifications** — iMessage/Discord/Slack alerts for task progress, watcher triggers, and errors (with quiet hours)
-- **Remote gateway** — WebSocket + REST gateway server for remote access from mobile apps and external clients, with Bearer token auth and session management
-- **iOS companion app** — Native SwiftUI app themed around the Dota 2 Meepo character, connects to the gateway over WebSocket for chat, session management, and real-time events
-- **Security hardened** — Command allowlists, path traversal protection, SSRF blocking, input sanitization, 30s execution timeouts
+[Quick Start](#quick-start) · [Features](#features) · [Documentation](#configuration-reference) · [Contributing](CONTRIBUTING.md)
 
-## Requirements
+</div>
 
-- macOS or Windows
-- LLM provider (at least one):
-  - **Anthropic Claude**: API key from https://console.anthropic.com
-  - **OpenAI**: API key from https://platform.openai.com/api-keys
-  - **Google Gemini**: API key from https://aistudio.google.com/apikey
-  - **Ollama**: Free, runs locally — supports Llama, Mistral, CodeLlama, and more
-  - **Any OpenAI-compatible endpoint**: Together, Groq, LM Studio, etc.
-- Optional: Tavily API key (enables web search)
-- Optional: Discord bot token, Slack bot token
-- Rust toolchain only needed when building from source
+---
 
-### Using Ollama (Local LLMs)
+Meepo is an open-source, privacy-first AI agent written in Rust that runs as a daemon on your machine. It connects large language models (Claude, GPT-4, Gemini, Llama, Mistral) to your email, calendar, messages, browser, files, code, and more — all without sending your data to third-party agent platforms.
 
-Meepo supports [Ollama](https://ollama.ai) for running local LLMs without requiring an API key:
+Think of it as a **local AI assistant that actually does things**: reads your email, schedules meetings, searches the web, automates your browser, monitors GitHub, manages reminders, and talks to you over Discord, Slack, or iMessage — all running on your own hardware.
 
-1. **Install Ollama:**
-   ```bash
-   curl -fsSL https://ollama.ai/install.sh | sh
-   ```
+### Why Meepo?
 
-2. **Pull a model:**
-   ```bash
-   ollama pull llama3.2        # or mistral, codellama, phi3, etc.
-   ```
+- **Runs locally** — Your data stays on your machine. No cloud agent platform required.
+- **75+ tools out of the box** — Email, calendar, browser automation, web search, code PRs, knowledge graph, and more.
+- **Works with any LLM** — Claude, GPT-4o, Gemini, Llama 3, Mistral, or any OpenAI-compatible API. Automatic failover between providers.
+- **Always-on daemon** — Autonomous observe/think/act loop with scheduled watchers, proactive notifications, and goal tracking.
+- **Interoperable** — Speaks [MCP](https://modelcontextprotocol.io/) and [A2A](https://google.github.io/A2A/) protocols. Plug into Claude Desktop, Cursor, or other AI agents.
+- **Extensible** — Add custom tools, import SKILL.md files, swap agent personalities with templates, or connect external MCP servers.
+- **Cross-platform** — macOS (AppleScript) and Windows (PowerShell/COM) with a clean platform abstraction layer.
 
-3. **Configure Meepo** to use Ollama in `~/.meepo/config.toml`:
-   ```toml
-   [agent]
-   default_model = "ollama"
+---
 
-   [providers.ollama]
-   base_url = "http://localhost:11434"
-   model = "llama3.2"
-   ```
+## Quick Start
 
-4. **Start Meepo:**
-   ```bash
-   meepo start
-   ```
+The fastest way to get running:
 
-Ollama runs entirely on your machine — no API key needed, no data sent to external servers.
-
-### Platform Notes
-
-| Feature | macOS | Windows |
-|---------|-------|---------|
-| Email (tool) | Mail.app via AppleScript | Outlook via PowerShell COM |
-| Calendar (tool) | Calendar.app via AppleScript | Outlook via PowerShell COM |
-| Reminders (tool) | Reminders.app via AppleScript | Not available |
-| Notes (tool) | Notes.app via AppleScript | Not available |
-| Contacts (tool) | Contacts.app via AppleScript | Not available |
-| Music (tool) | Apple Music via AppleScript | Not available |
-| Screen capture | `screencapture` CLI | Not available |
-| Notifications | `osascript` display notification | Not available |
-| Clipboard | `arboard` crate (cross-platform) | `arboard` crate (cross-platform) |
-| App launching | `open` crate (cross-platform) | `open` crate (cross-platform) |
-| UI automation | System Events (AppleScript) | System.Windows.Automation (PowerShell) |
-| Browser automation | Safari + Chrome (AppleScript) | Not yet available |
-| iMessage channel | Messages.app (SQLite + AppleScript) | Not available |
-| Email channel | Mail.app polling | Not available (use email tools instead) |
-| Background service | `launchd` agent | Windows Task Scheduler |
-
-## Install
-
-**macOS (Homebrew) — recommended:**
 ```bash
+# macOS (Homebrew)
 brew install leancoderkavy/tap/meepo
-meepo setup
-```
+meepo setup    # Interactive wizard — walks you through API keys, permissions, and channels
 
-After setup, run as a background service (auto-starts on login):
-```bash
-brew services start meepo
-```
-
-**macOS / Linux (curl):**
-```bash
+# macOS / Linux (curl)
 curl -sSL https://raw.githubusercontent.com/leancoderkavy/meepo/main/install.sh | bash
-```
 
-**Windows (PowerShell):**
-```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/leancoderkavy/meepo/main/install.ps1 | iex
 ```
+
+Then start the agent:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # or OPENAI_API_KEY, GOOGLE_AI_API_KEY
+meepo start
+```
+
+> **No API key?** Use [Ollama](https://ollama.ai) for free local models — see [Using Ollama](#using-ollama-local-llms) below.
+
+One-shot mode (no daemon needed):
+
+```bash
+meepo ask "What's on my calendar today?"
+```
+
+<details>
+<summary><strong>More install options (DMG, from source)</strong></summary>
+
+**macOS (DMG):**
+
+Download the latest `.dmg` from the [Releases page](https://github.com/leancoderkavy/meepo/releases), open it, and drag **Meepo.app** to Applications. On first launch, the setup wizard opens automatically. Or build the DMG yourself:
+
+```bash
+git clone https://github.com/leancoderkavy/meepo.git && cd meepo
+./installer/scripts/build-dmg.sh
+open installer/dist/Meepo-*.dmg
+```
+
+See [installer/README.md](installer/README.md) for build options (universal binary, custom icon, etc.).
 
 **From source (macOS/Linux):**
 ```bash
@@ -124,162 +92,162 @@ git clone https://github.com/leancoderkavy/meepo.git; cd meepo
 cargo build --release; .\target\release\meepo.exe setup
 ```
 
-All methods run `meepo setup` — an interactive wizard that walks you through API keys, macOS permissions (Accessibility, Full Disk Access, Automation, Screen Recording), feature selection, and connection verification. It opens System Settings panes for you and detects your terminal app automatically.
+</details>
 
-If something isn't working, run `meepo doctor` to diagnose the issue.
+## Features
 
-## Manual Setup
+| Category | Highlights |
+|----------|-----------|
+| **Messaging** | Discord, Slack, iMessage (macOS), email (macOS), CLI one-shots |
+| **75+ Tools** | Email, calendar, reminders, notes, contacts, browser, web search, files, code PRs, music, screen capture, research, tasks, finance, health, travel, social |
+| **Autonomous Loop** | Observe/think/act cycle, goal tracking, proactive notifications, quiet hours |
+| **LLM Providers** | Anthropic Claude, OpenAI, Google Gemini, Ollama (local), any OpenAI-compatible endpoint — with automatic failover |
+| **Browser Automation** | Safari + Chrome: tabs, navigation, JS execution, form filling, screenshots |
+| **Knowledge Graph** | Persistent memory with SQLite + Tantivy full-text search across sessions |
+| **Clone Delegation** | Spawn parallel sub-agents for complex tasks; background clones report back when done |
+| **Watchers** | Monitor email, calendar, GitHub, files, or run cron tasks on a schedule |
+| **MCP** | Expose tools as an MCP server (STDIO) for Claude Desktop / Cursor; consume external MCP servers |
+| **A2A Protocol** | Google's Agent-to-Agent protocol for multi-agent task delegation over HTTP |
+| **Remote Gateway** | WebSocket + REST server for mobile apps and external clients (Bearer auth, sessions) |
+| **iOS App** | Native SwiftUI companion app — real-time chat, sessions, tool indicators |
+| **Templates & Skills** | Swap agent personalities; import OpenClaw-compatible SKILL.md files as tools |
+| **Security** | Command allowlists, path traversal protection, SSRF blocking, input sanitization, execution timeouts |
 
-### 1. Build
+## Requirements
 
-```bash
-git clone https://github.com/leancoderkavy/meepo.git
-cd meepo
-cargo build --release
-```
+- **macOS** or **Windows**
+- **At least one LLM provider:**
 
-The binary is at `target/release/meepo` (macOS/Linux) or `target\release\meepo.exe` (Windows). First build takes ~5 minutes.
+| Provider | How to get access |
+|----------|-------------------|
+| Anthropic Claude | API key from [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI | API key from [platform.openai.com](https://platform.openai.com/api-keys) |
+| Google Gemini | API key from [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Ollama (local) | Free — [ollama.ai](https://ollama.ai). No API key needed. |
+| OpenAI-compatible | Together, Groq, LM Studio, etc. |
 
-### 2. Initialize
+- **Optional:** [Tavily](https://tavily.com) API key (enables `web_search` tool), Discord bot token, Slack bot token
+- **Rust toolchain** only needed when building from source
 
-```bash
-meepo init
-```
+### Using Ollama (Local LLMs)
 
-This creates `~/.meepo/` with:
-- `config.toml` — Main configuration
-- `workspace/SOUL.md` — Agent personality (editable)
-- `workspace/MEMORY.md` — Persistent memory (auto-updated)
-
-### 3. Configure API Keys
-
-Set at least one LLM provider key:
-
-```bash
-# Anthropic (Claude)
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# OpenAI (GPT-4o)
-export OPENAI_API_KEY="sk-..."
-
-# Google (Gemini)
-export GOOGLE_AI_API_KEY="AIza..."
-
-# Or use Ollama — no API key needed (see "Using Ollama" section above)
-```
-
-On Windows PowerShell, use `$env:VAR = "value"` or persist with `[Environment]::SetEnvironmentVariable("VAR", "value", "User")`.
-
-**Tavily (optional — enables web search):**
+Run models locally with zero API costs:
 
 ```bash
-export TAVILY_API_KEY="tvly-..."
+curl -fsSL https://ollama.ai/install.sh | sh   # Install Ollama
+ollama pull llama3.2                             # Pull a model
 ```
 
-Get yours at [tavily.com](https://tavily.com). Without this key, Meepo still works — the `web_search` tool just won't be available, and `browse_url` will fall back to raw HTML fetching.
-
-### 4. macOS Permissions
-
-Meepo's tools require several macOS permissions. The `meepo setup` wizard handles all of these automatically — it detects what's missing, opens the correct System Settings pane, and tells you exactly what to click. You can also grant them manually:
-
-| Permission | Required For | System Settings Path |
-|------------|-------------|---------------------|
-| **Accessibility** | `read_screen`, `click_element`, `type_text` (UI automation) | Privacy & Security → Accessibility |
-| **Full Disk Access** | iMessage channel (reads `~/Library/Messages/chat.db`) | Privacy & Security → Full Disk Access |
-| **Automation** | Email, Calendar, Reminders, Notes, Messages, Music tools | Privacy & Security → Automation |
-| **Screen Recording** | `screen_capture` tool | Privacy & Security → Screen Recording |
-
-Grant each permission to your terminal app (Terminal, iTerm, Warp, Ghostty, VS Code, etc.). The setup wizard detects which terminal you're using.
-
-> **Tip:** If a tool fails with a permission error after setup, re-run `meepo setup` — it will check and guide you through any missing permissions.
-
-### 5. Enable Channels
-
-The setup wizard lets you enable channels interactively. You can also edit `~/.meepo/config.toml` manually:
-
-#### Discord
+Configure `~/.meepo/config.toml`:
 
 ```toml
-[channels.discord]
-enabled = true
-token = "${DISCORD_BOT_TOKEN}"
-allowed_users = ["123456789012345678"]  # Your Discord user ID
+[agent]
+default_model = "ollama"
+
+[providers.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.2"
 ```
-
-Requires a Discord bot with `MESSAGE_CONTENT` and `DIRECT_MESSAGES` intents enabled. Create one at the [Discord Developer Portal](https://discord.com/developers/applications).
-
-#### Slack
-
-```toml
-[channels.slack]
-enabled = true
-bot_token = "${SLACK_BOT_TOKEN}"
-poll_interval_secs = 3
-```
-
-Requires a Slack app with `chat:write`, `channels:read`, and `im:history` scopes. Create one at [api.slack.com/apps](https://api.slack.com/apps).
-
-#### iMessage (macOS only)
-
-```toml
-[channels.imessage]
-enabled = true
-allowed_contacts = ["+15551234567", "user@icloud.com"]
-poll_interval_secs = 3
-```
-
-No API key needed. Requires macOS with **Full Disk Access** granted to your terminal (System Settings > Privacy & Security > Full Disk Access). Not available on Windows.
-
-All messages from allowed contacts are processed. Example: text "What's on my calendar?" to get a response.
-
-#### Safari Browser Automation
-
-If you enabled browser automation with Safari, one extra setting is needed:
-
-1. Open Safari
-2. Safari → Settings → Advanced
-3. Check "Show features for web developers"
-4. Close Settings
-5. Develop menu → Allow JavaScript from Apple Events (check it)
-
-Chrome requires no extra setup.
-
-### 6. Run
 
 ```bash
-# Start the daemon (Ctrl+C to stop)
-meepo start
-
-# With debug logging
-meepo --debug start
-
-# Stop a backgrounded daemon
-meepo stop
+meepo start   # No API key needed — everything runs on your machine
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `meepo setup` | Interactive setup wizard (API keys, macOS permissions, feature selection, connection test) |
-| `meepo init` | Create `~/.meepo/` with default config |
+| `meepo setup` | Interactive setup wizard (API keys, permissions, channels, connection test) |
 | `meepo start` | Start the agent daemon |
 | `meepo stop` | Stop a running daemon |
 | `meepo ask "..."` | One-shot question (no daemon needed) |
+| `meepo init` | Create `~/.meepo/` with default config |
 | `meepo config` | Show loaded configuration |
+| `meepo doctor` | Diagnose common issues |
 | `meepo mcp-server` | Run as an MCP server over STDIO |
-| `meepo template list` | List available agent templates |
-| `meepo template use <name>` | Activate a template (overlay on current config) |
-| `meepo template info <name>` | Show what a template will change |
-| `meepo template reset` | Remove active template, restore previous config |
-| `meepo template create <name>` | Create a new template from current config |
-| `meepo template remove <name>` | Remove an installed template |
+| `meepo template list\|use\|info\|reset\|create\|remove` | Manage agent templates |
 | `meepo --debug <cmd>` | Enable debug logging |
 | `meepo --config <path> <cmd>` | Use custom config file |
 
+## Channels
+
+Meepo monitors multiple messaging platforms simultaneously. Enable them in `~/.meepo/config.toml` or via `meepo setup`:
+
+| Channel | Config Key | Requirements |
+|---------|-----------|--------------|
+| **Discord** | `[channels.discord]` | Bot token + `MESSAGE_CONTENT` intent ([Developer Portal](https://discord.com/developers/applications)) |
+| **Slack** | `[channels.slack]` | Bot token with `chat:write`, `channels:read`, `im:history` ([api.slack.com](https://api.slack.com/apps)) |
+| **iMessage** | `[channels.imessage]` | macOS only. Full Disk Access permission. No API key. |
+| **Email** | `[channels.email]` | macOS only. Polls Mail.app with subject prefix filtering. |
+| **CLI** | `meepo ask "..."` | Works everywhere, no setup needed. |
+
+<details>
+<summary><strong>Channel configuration examples</strong></summary>
+
+```toml
+[channels.discord]
+enabled = true
+token = "${DISCORD_BOT_TOKEN}"
+allowed_users = ["123456789012345678"]
+
+[channels.slack]
+enabled = true
+bot_token = "${SLACK_BOT_TOKEN}"
+poll_interval_secs = 3
+
+[channels.imessage]
+enabled = true
+allowed_contacts = ["+15551234567", "user@icloud.com"]
+poll_interval_secs = 3
+
+[channels.email]
+enabled = true
+poll_interval_secs = 10
+subject_prefix = "[meepo]"
+```
+
+</details>
+
+## Tools
+
+Meepo ships with 75+ tools the LLM can invoke during conversations:
+
+<details>
+<summary><strong>Full tool list</strong></summary>
+
+| Category | Tools |
+|----------|-------|
+| **Email & Calendar** | `read_emails`, `send_email`, `read_calendar`, `create_calendar_event` |
+| **Reminders & Notes** | `list_reminders`, `create_reminder`, `list_notes`, `create_note` |
+| **System Apps** | `open_app`, `get_clipboard`, `send_notification`, `screen_capture`, `search_contacts` |
+| **Music** | `get_current_track`, `music_control` |
+| **UI Automation** | `read_screen`, `click_element`, `type_text` |
+| **Browser** | `browser_list_tabs`, `browser_open_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_get_page_content`, `browser_execute_js`, `browser_click`, `browser_fill_form`, `browser_navigate`, `browser_get_url`, `browser_screenshot` |
+| **Code** | `write_code`, `make_pr`, `review_pr`, `spawn_coding_agent` |
+| **Web** | `web_search`, `browse_url` |
+| **Memory** | `remember`, `recall`, `search_knowledge`, `link_entities` |
+| **System** | `run_command`, `read_file`, `write_file` |
+| **Filesystem** | `list_directory`, `search_files` |
+| **Watchers** | `create_watcher`, `list_watchers`, `cancel_watcher` |
+| **Autonomous** | `spawn_background_task`, `agent_status`, `stop_task` |
+| **Delegation** | `delegate_tasks` |
+| **Email Intelligence** | `email_triage`, `email_draft_reply`, `email_summarize_thread`, `email_unsubscribe` |
+| **Smart Calendar** | `find_free_time`, `schedule_meeting`, `reschedule_event`, `daily_briefing`, `weekly_review` |
+| **Deep Research** | `research_topic`, `compile_report`, `track_topic`, `fact_check` |
+| **SMS Autopilot** | `send_sms`, `set_auto_reply`, `message_summary` |
+| **Task Manager** | `create_task`, `list_tasks`, `update_task`, `complete_task`, `project_status` |
+| **News Curator** | `track_feed`, `untrack_feed`, `summarize_article`, `content_digest` |
+| **Finance Tracker** | `log_expense`, `spending_summary`, `budget_check`, `parse_receipt` |
+| **Health & Habits** | `log_habit`, `habit_streak`, `habit_report` |
+| **Travel Assistant** | `get_weather`, `get_directions`, `flight_status`, `packing_list` |
+| **Social Manager** | `relationship_summary`, `suggest_followups` |
+
+</details>
+
 ## Configuration Reference
 
-Full config file: `~/.meepo/config.toml`
+<details>
+<summary><strong>Full <code>~/.meepo/config.toml</code> reference</strong></summary>
 
 ```toml
 [agent]
@@ -309,7 +277,7 @@ allowed_users = []                     # Discord user IDs (strings)
 [channels.slack]
 enabled = false
 bot_token = "${SLACK_BOT_TOKEN}"
-poll_interval_secs = 3                 # How often to check for messages
+poll_interval_secs = 3
 
 [channels.imessage]
 enabled = false
@@ -320,7 +288,7 @@ trigger_prefix = "/d"                  # Optional prefix filter
 [channels.email]
 enabled = false                        # macOS only — poll Mail.app
 poll_interval_secs = 10
-subject_prefix = "[meepo]"            # Only process emails with this prefix
+subject_prefix = "[meepo]"
 
 [knowledge]
 db_path = "~/.meepo/knowledge.db"
@@ -332,35 +300,35 @@ min_poll_interval_secs = 30
 active_hours = { start = "08:00", end = "23:00" }
 
 [orchestrator]
-max_concurrent_subtasks = 5            # Parallel sub-tasks per delegation
-max_subtasks_per_request = 10          # Max sub-tasks per delegate call
-parallel_timeout_secs = 120            # Timeout per parallel sub-task
-background_timeout_secs = 600          # Timeout per background sub-task
-max_background_groups = 3              # Concurrent background groups
+max_concurrent_subtasks = 5
+max_subtasks_per_request = 10
+parallel_timeout_secs = 120
+background_timeout_secs = 600
+max_background_groups = 3
 
 [code]
-coding_agent_path = "claude"           # Path to coding agent CLI (claude, aider, codex)
-gh_path = "gh"                         # Path to GitHub CLI
+coding_agent_path = "claude"           # claude, aider, codex
+gh_path = "gh"
 default_workspace = "~/Coding"
 
 [memory]
 workspace = "~/.meepo/workspace"       # Contains SOUL.md and MEMORY.md
 
 [filesystem]
-allowed_directories = ["~/Coding"]     # Directories the agent can browse/search
+allowed_directories = ["~/Coding"]     # Sandboxed file access
 
 [browser]
-enabled = true                         # Enable browser automation tools
+enabled = true
 default_browser = "safari"             # "safari" or "chrome"
 
 [autonomy]
-enabled = true                         # Autonomous observe/think/act loop
-tick_interval_secs = 30                # Idle tick rate
-max_goals = 50                         # Prevent runaway goal creation
-send_acknowledgments = true            # Typing indicators before processing
+enabled = true
+tick_interval_secs = 30
+max_goals = 50
+send_acknowledgments = true
 
 [notifications]
-enabled = false                        # Proactive alerts via iMessage/Discord/Slack
+enabled = false
 channel = "imessage"                   # "imessage", "discord", "slack", "email"
 on_task_start = true
 on_task_complete = true
@@ -373,7 +341,7 @@ on_error = true
 # end = "08:00"
 
 [mcp.server]
-enabled = true                         # Expose tools via MCP (STDIO)
+enabled = true
 exposed_tools = []                     # Empty = all tools (except delegate_tasks)
 
 # [[mcp.clients]]                      # Connect to external MCP servers
@@ -383,53 +351,48 @@ exposed_tools = []                     # Empty = all tools (except delegate_task
 # env = [["GITHUB_TOKEN", "${GITHUB_TOKEN}"]]
 
 [gateway]
-enabled = false                        # Remote gateway (WebSocket + REST)
-bind = "127.0.0.1"                     # Bind address (use 0.0.0.0 for LAN access)
-port = 18789                           # Gateway port
-auth_token = "${MEEPO_GATEWAY_TOKEN}"  # Bearer token for authentication
+enabled = false
+bind = "127.0.0.1"                     # Use 0.0.0.0 for LAN access
+port = 18789
+auth_token = "${MEEPO_GATEWAY_TOKEN}"
 
 [a2a]
-enabled = false                        # A2A protocol (HTTP)
+enabled = false
 port = 8081
 auth_token = "${A2A_AUTH_TOKEN}"
-allowed_tools = []                     # Tools available to incoming A2A tasks
+allowed_tools = []
 
 [skills]
-enabled = false                        # Import SKILL.md files as tools
+enabled = false
 dir = "~/.meepo/skills"
 ```
 
 Environment variables are expanded with `${VAR_NAME}` syntax. Paths support `~/` expansion.
 
+</details>
+
 ## Remote Gateway
 
-The Meepo Gateway is a WebSocket + REST server that lets external clients (like the iOS app) communicate with the running daemon. It exposes the agent's full capabilities over a JSON-RPC protocol.
-
-### Enable the Gateway
+The gateway is a WebSocket + REST server for remote access from mobile apps and external clients.
 
 ```toml
-# In ~/.meepo/config.toml
 [gateway]
 enabled = true
-bind = "127.0.0.1"    # Use "0.0.0.0" for LAN access (e.g. from a physical iPhone)
+bind = "0.0.0.0"    # LAN access (use 127.0.0.1 for local only)
 port = 18789
 auth_token = "${MEEPO_GATEWAY_TOKEN}"
 ```
 
-Set the auth token:
-```bash
-export MEEPO_GATEWAY_TOKEN="your-secret-token"
-```
-
-### Endpoints
-
 | Endpoint | Protocol | Description |
 |----------|----------|-------------|
-| `/ws` | WebSocket | Real-time bidirectional communication (chat, events, typing indicators) |
-| `/api/status` | REST GET | Agent status and health check |
+| `/ws` | WebSocket | Real-time chat, events, typing indicators (JSON-RPC) |
+| `/api/status` | REST GET | Agent health check |
 | `/api/sessions` | REST GET | List active sessions |
 
-### WebSocket Protocol (JSON-RPC)
+<details>
+<summary><strong>WebSocket JSON-RPC methods & events</strong></summary>
+
+**Methods:**
 
 | Method | Description |
 |--------|-------------|
@@ -439,284 +402,181 @@ export MEEPO_GATEWAY_TOKEN="your-secret-token"
 | `session.history` | Get message history for a session |
 | `status.get` | Get agent status |
 
-Events broadcast from the server:
+**Events (server → client):**
 
 | Event | Description |
 |-------|-------------|
 | `message.received` | Agent response or incoming message |
-| `typing.start` / `typing.stop` | Agent typing indicators |
-| `tool.executing` | Agent is executing a tool (with tool name) |
-| `session.created` | A new session was created |
-| `response` | Direct response to a request (matched by `id`) |
+| `typing.start` / `typing.stop` | Typing indicators |
+| `tool.executing` | Tool execution in progress |
+| `session.created` | New session created |
 
-### Networking
+</details>
 
-- **Simulator:** `127.0.0.1` works — the iOS Simulator shares the Mac's network stack.
-- **Physical iPhone:** Set `bind = "0.0.0.0"` and use your Mac's LAN IP (e.g. `192.168.1.x`) in the app's Settings.
-- **Firewall:** Ensure port 18789 is open if connecting from another device.
+**Networking tips:**
+- **iOS Simulator:** `127.0.0.1` works (shares Mac's network stack)
+- **Physical iPhone:** Use `bind = "0.0.0.0"` and your Mac's LAN IP in the app
+- **Firewall:** Ensure port 18789 is open for cross-device access
 
 ## iOS Companion App
 
-A native SwiftUI app themed around the Dota 2 Meepo character that connects to the gateway for mobile access to your agent.
-
-### Features
-
-- **Real-time chat** — Send messages and receive streaming responses via WebSocket
-- **Session management** — Create, list, and switch between conversation sessions
-- **Live indicators** — Typing indicators and tool execution badges
-- **Meepo theme** — Earthy cave aesthetic with hood blue, warm tan, and gold accents
-- **Connection management** — Auto-reconnect with exponential backoff, error states with retry
-
-### Build & Run
-
-Requires Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+A native SwiftUI app that connects to the gateway for mobile access to your agent.
 
 ```bash
-# Install XcodeGen (if not already installed)
 brew install xcodegen
-
-# Generate the Xcode project
-cd MeepoApp
-xcodegen generate
-
-# Build for simulator
-xcodebuild -project MeepoApp.xcodeproj -scheme MeepoApp \
-  -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' build
-
-# Or open in Xcode
+cd MeepoApp && xcodegen generate
 open MeepoApp.xcodeproj
+# Select your device → ⌘R
 ```
 
-### Configuration
+See the **[iOS Setup Guide](docs/IOS_SETUP_GUIDE.md)** for networking, troubleshooting, and physical device configuration.
 
-In the app's **Settings** tab:
+## Platform Support
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Host | `127.0.0.1` | Gateway address |
-| Port | `18789` | Gateway port |
-| Auth Token | *(empty)* | Must match `MEEPO_GATEWAY_TOKEN` |
-| Use TLS | Off | Toggle `ws://` vs `wss://` |
+<details>
+<summary><strong>macOS vs Windows feature matrix</strong></summary>
 
-### Architecture
+| Feature | macOS | Windows |
+|---------|-------|---------|
+| Email (tool) | Mail.app via AppleScript | Outlook via PowerShell COM |
+| Calendar (tool) | Calendar.app via AppleScript | Outlook via PowerShell COM |
+| Reminders (tool) | Reminders.app via AppleScript | Not available |
+| Notes (tool) | Notes.app via AppleScript | Not available |
+| Contacts (tool) | Contacts.app via AppleScript | Not available |
+| Music (tool) | Apple Music via AppleScript | Not available |
+| Screen capture | `screencapture` CLI | Not available |
+| Notifications | `osascript` display notification | Not available |
+| Clipboard | `arboard` (cross-platform) | `arboard` (cross-platform) |
+| App launching | `open` (cross-platform) | `open` (cross-platform) |
+| UI automation | System Events (AppleScript) | System.Windows.Automation (PowerShell) |
+| Browser automation | Safari + Chrome (AppleScript) | Not yet available |
+| iMessage channel | Messages.app (SQLite + AppleScript) | Not available |
+| Email channel | Mail.app polling | Not available |
+| Background service | `launchd` agent | Windows Task Scheduler |
 
-```
-MeepoApp/
-├── Sources/
-│   ├── MeepoApp.swift              # @main entry point
-│   ├── Theme/MeepoTheme.swift      # Color palette, gradients, view modifiers
-│   ├── Models/                     # GatewayProtocol, ChatMessage, Session
-│   ├── Networking/                 # MeepoClient (WebSocket + REST), SettingsStore
-│   ├── ViewModels/                 # ChatViewModel
-│   └── Views/                     # ChatView, SessionsView, SettingsView, ContentView
-├── Resources/                     # Info.plist, Assets.xcassets
-└── project.yml                    # XcodeGen spec (iOS 17.0+, Swift 5.9)
-```
+</details>
 
-## Tools
+<details>
+<summary><strong>macOS permissions</strong></summary>
 
-Meepo registers 75+ tools that the LLM can use during conversations:
+The `meepo setup` wizard handles all of these automatically. You can also grant them manually:
 
-| Category | Tools |
-|----------|-------|
-| **Email & Calendar** | `read_emails`, `send_email`, `read_calendar`, `create_calendar_event` |
-| **Reminders & Notes** | `list_reminders`, `create_reminder`, `list_notes`, `create_note` |
-| **System Apps** | `open_app`, `get_clipboard`, `send_notification`, `screen_capture`, `search_contacts` |
-| **Music** | `get_current_track`, `music_control` |
-| **UI Automation** | `read_screen`, `click_element`, `type_text` |
-| **Browser** | `browser_list_tabs`, `browser_open_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_get_page_content`, `browser_execute_js`, `browser_click`, `browser_fill_form`, `browser_navigate`, `browser_get_url`, `browser_screenshot` |
-| **Code** | `write_code`, `make_pr`, `review_pr`, `spawn_coding_agent` |
-| **Web** | `web_search`, `browse_url` |
-| **Memory** | `remember`, `recall`, `search_knowledge`, `link_entities` |
-| **System** | `run_command`, `read_file`, `write_file` |
-| **Filesystem** | `list_directory`, `search_files` |
-| **Watchers** | `create_watcher`, `list_watchers`, `cancel_watcher` |
-| **Autonomous** | `spawn_background_task`, `agent_status`, `stop_task` |
-| **Delegation** | `delegate_tasks` |
-| **Email Intelligence** | `email_triage`, `email_draft_reply`, `email_summarize_thread`, `email_unsubscribe` |
-| **Smart Calendar** | `find_free_time`, `schedule_meeting`, `reschedule_event`, `daily_briefing`, `weekly_review` |
-| **Deep Research** | `research_topic`, `compile_report`, `track_topic`, `fact_check` |
-| **SMS Autopilot** | `send_sms`, `set_auto_reply`, `message_summary` |
-| **Task Manager** | `create_task`, `list_tasks`, `update_task`, `complete_task`, `project_status` |
-| **News Curator** | `track_feed`, `untrack_feed`, `summarize_article`, `content_digest` |
-| **Finance Tracker** | `log_expense`, `spending_summary`, `budget_check`, `parse_receipt` |
-| **Health & Habits** | `log_habit`, `habit_streak`, `habit_report` |
-| **Travel Assistant** | `get_weather`, `get_directions`, `flight_status`, `packing_list` |
-| **Social Manager** | `relationship_summary`, `suggest_followups` |
+| Permission | Required For | System Settings Path |
+|------------|-------------|---------------------|
+| **Accessibility** | UI automation (`read_screen`, `click_element`, `type_text`) | Privacy & Security → Accessibility |
+| **Full Disk Access** | iMessage channel | Privacy & Security → Full Disk Access |
+| **Automation** | Email, Calendar, Reminders, Notes, Messages, Music | Privacy & Security → Automation |
+| **Screen Recording** | `screen_capture` tool | Privacy & Security → Screen Recording |
 
-## Architecture
+Grant each to your terminal app. Re-run `meepo setup` if a tool fails with a permission error.
 
-See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation with Mermaid diagrams.
+</details>
 
 ## Running as a Background Service
 
-**macOS (Homebrew) — recommended:**
-
 ```bash
-brew services start meepo   # Start and enable on login
-brew services stop meepo    # Stop
-brew services restart meepo # Restart
+# macOS (Homebrew — recommended)
+brew services start meepo    # Start and enable on login
+brew services stop meepo
+brew services restart meepo
+# Logs: $(brew --prefix)/var/log/meepo/meepo.log
+
+# macOS (manual launchd)
+scripts/install.sh           # Install and start
+scripts/uninstall.sh         # Remove
+# Logs: ~/.meepo/logs/meepo.out.log
 ```
-
-Logs: `$(brew --prefix)/var/log/meepo/meepo.log`
-
-**macOS (manual launchd):**
-
-```bash
-scripts/install.sh     # Install and start
-scripts/uninstall.sh   # Remove
-```
-
-Logs: `~/.meepo/logs/meepo.out.log`
-
-**Windows** — Install as a scheduled task (starts on login, auto-restarts):
 
 ```powershell
-scripts\install.ps1     # Install and start (requires Administrator)
-scripts\uninstall.ps1   # Remove
+# Windows (scheduled task — starts on login, auto-restarts)
+scripts\install.ps1          # Install (requires Administrator)
+scripts\uninstall.ps1        # Remove
 ```
 
-## Running in a Tart VM
+<details>
+<summary><strong>Running in a Tart VM</strong></summary>
 
-[Tart](https://tart.run) is a virtualization toolset for macOS VMs on Apple Silicon. Running Meepo inside a Tart VM is useful for sandboxed testing, CI, or isolating the agent from your host machine.
-
-### Quick Start
+[Tart](https://tart.run) lets you run macOS VMs on Apple Silicon for sandboxed testing or CI.
 
 ```bash
-# On the host — create and boot a macOS VM
 tart create meepo-vm --from-oci ghcr.io/cirruslabs/macos-sequoia-base:latest
 tart run meepo-vm
 
-# Inside the VM — install and set up Meepo
+# Inside the VM:
 curl -sSL https://raw.githubusercontent.com/leancoderkavy/meepo/main/install.sh | bash
-export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY, or use Ollama
-meepo setup
-meepo start
+export ANTHROPIC_API_KEY="sk-ant-..."
+meepo setup && meepo start
 ```
 
-### What works in a Tart VM
+| Feature | GUI mode | Headless |
+|---------|----------|----------|
+| CLI, Discord, Slack, Email, MCP, A2A, Knowledge graph | ✓ | ✓ |
+| iMessage | ✓ (Apple ID required) | ✓ (Apple ID required) |
+| Browser, Screen capture, UI automation, Music | ✓ | ✗ |
 
-| Feature | GUI mode (`tart run`) | Headless (`tart run --no-graphics`) |
-|---------|----------------------|-------------------------------------|
-| CLI (`meepo ask`, `meepo start`) | ✓ | ✓ |
-| Discord / Slack / Email channels | ✓ | ✓ |
-| Knowledge graph, watchers, MCP, A2A | ✓ | ✓ |
-| iMessage channel | ✓ (requires Apple ID sign-in) | ✓ (requires Apple ID sign-in) |
-| Browser automation (Safari/Chrome) | ✓ | ✗ (no display session) |
-| Screen capture, UI automation | ✓ | ✗ (no display session) |
-| Music control | ✓ | ✗ |
+Use `tart run meepo-vm --net-softnet` for bridged networking (A2A/gateway access from host).
 
-### Permissions in a Tart VM
+</details>
 
-macOS permissions (Accessibility, Full Disk Access, Automation, Screen Recording) must be granted **inside the VM** just like on a physical Mac. Run `meepo setup` inside the VM — it detects the environment and walks you through each permission.
+## Architecture
 
-### Networking
-
-Tart VMs use NAT by default. If you need the A2A server (port 8081) or MCP server accessible from the host:
-
-```bash
-# Use softnet for bridged networking
-tart run meepo-vm --net-softnet
-
-# Or use Tart's built-in port forwarding (Tart 2.0+)
-tart run meepo-vm --rosetta --dir=share:~/shared
+```
+crates/
+├── meepo-cli/        # Binary, CLI commands, daemon startup, config, templates
+├── meepo-core/       # Agent loop, API client, 75+ tools, orchestrator, autonomy
+├── meepo-channels/   # Discord, Slack, iMessage, email adapters + message bus
+├── meepo-knowledge/  # SQLite + Tantivy knowledge graph
+├── meepo-scheduler/  # Watcher runner, persistence, polling
+├── meepo-mcp/        # MCP server (STDIO) + client for external MCP servers
+├── meepo-a2a/        # A2A protocol server + client (HTTP)
+└── meepo-gateway/    # Remote gateway (WebSocket + REST, Axum)
 ```
 
-> **Tip:** The `meepo setup` wizard detects when running inside a VM and shows relevant guidance automatically.
+See [docs/architecture.md](docs/architecture.md) for detailed diagrams.
 
 ## Troubleshooting
 
+<details>
+<summary><strong>Common issues and solutions</strong></summary>
+
 **"No LLM provider configured" or empty responses**
 - Verify at least one provider key is set: `echo $ANTHROPIC_API_KEY` or `echo $OPENAI_API_KEY`
-- If using the launch agent, re-run `scripts/install.sh` after setting new env vars (the plist snapshots env vars at install time)
+- If using the launch agent, re-run `scripts/install.sh` after setting new env vars
 
 **iMessage not receiving messages**
 - Run `meepo setup` — it checks Full Disk Access and opens System Settings for you
-- Or manually: System Settings → Privacy & Security → Full Disk Access → add your terminal app
 - Check `allowed_contacts` in config includes the sender's phone/email
-- You may need to restart your terminal after granting Full Disk Access
+- Restart your terminal after granting Full Disk Access
 
 **`web_search` tool not available**
-- Set `TAVILY_API_KEY` env var — Meepo logs a warning at startup if it's missing
-- The tool is only registered when a valid Tavily API key is configured
+- Set `TAVILY_API_KEY` — the tool is only registered when a valid key is configured
 
 **Discord bot not responding**
-- Enable `MESSAGE CONTENT INTENT` in the Discord Developer Portal (Bot > Privileged Gateway Intents)
-- Verify `allowed_users` contains your Discord user ID (right-click your name > Copy User ID)
+- Enable `MESSAGE CONTENT INTENT` in the Developer Portal (Bot → Privileged Gateway Intents)
+- Verify `allowed_users` contains your Discord user ID
 
 **Build failures**
-- Ensure Rust is up to date: `rustup update`
+- Update Rust: `rustup update`
 - Clean build: `cargo clean && cargo build --release`
 - Windows: Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++"
 
-**macOS permission errors ("not allowed assistive access", "not authorized")**
+**macOS permission errors**
 - Run `meepo setup` — it detects missing permissions and opens the correct System Settings pane
-- Accessibility: System Settings → Privacy & Security → Accessibility → add your terminal
-- Automation: System Settings → Privacy & Security → Automation → enable apps under your terminal
-- Screen Recording: System Settings → Privacy & Security → Screen Recording → add your terminal
-- Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add your terminal
-- After granting, you may need to restart your terminal
+- After granting permissions, restart your terminal
 
-**"Permission denied" running scripts**
-- macOS/Linux: `chmod +x scripts/*.sh`
-- Windows: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+**Windows: API key not persisting**
+- Use `[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-...", "User")` to persist, then restart terminal
 
-**Windows: Email/Calendar tools not working**
-- Outlook must be installed (uses COM automation)
-- Verify with PowerShell: `New-Object -ComObject Outlook.Application`
-- If using Windows Mail instead of Outlook, these tools won't work
-
-**Windows: API key not persisting across sessions**
-- PowerShell `$env:` variables are session-only. To persist:
-  ```powershell
-  [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-...", "User")
-  # Or for OpenAI:
-  [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "sk-...", "User")
-  ```
-- Then restart your terminal
-
-## Project Structure
-
-```
-meepo/
-├── crates/
-│   ├── meepo-core/       # Agent loop, API client, tool system, orchestrator, autonomy
-│   ├── meepo-channels/   # Discord, Slack, iMessage, email adapters + message bus
-│   ├── meepo-knowledge/  # SQLite + Tantivy knowledge graph
-│   ├── meepo-scheduler/  # Watcher runner, persistence, polling
-│   ├── meepo-mcp/        # MCP server (STDIO) and client for external MCP servers
-│   ├── meepo-a2a/        # A2A (Agent-to-Agent) protocol server and client
-│   ├── meepo-gateway/    # Remote gateway server (WebSocket + REST, Axum)
-│   └── meepo-cli/        # CLI binary, config loading, template system
-├── MeepoApp/              # iOS companion app (SwiftUI, XcodeGen)
-│   ├── Sources/           # Swift source files (views, models, networking, theme)
-│   ├── Resources/         # Info.plist, Assets.xcassets
-│   └── project.yml        # XcodeGen project spec
-├── config/
-│   └── default.toml      # Default configuration template (heavily commented)
-├── scripts/
-│   ├── setup.sh          # Interactive first-time setup (macOS)
-│   ├── setup.ps1         # Interactive first-time setup (Windows)
-│   ├── install.sh        # Install as macOS launch agent
-│   ├── install.ps1       # Install as Windows scheduled task
-│   ├── uninstall.sh      # Remove macOS launch agent
-│   ├── uninstall.ps1     # Remove Windows scheduled task
-│   ├── run.sh            # Quick build-and-start (macOS)
-│   └── run.ps1           # Quick build-and-start (Windows)
-├── docs/
-│   └── architecture.md   # Detailed architecture with Mermaid diagrams
-├── CONTRIBUTING.md        # Developer setup and contribution guide
-├── CODE_OF_CONDUCT.md     # Community guidelines
-├── SECURITY.md            # Vulnerability reporting policy
-├── CHANGELOG.md           # Release history
-├── LICENSE                # MIT license
-├── SOUL.md               # Agent personality template
-└── MEMORY.md             # Agent memory template
-```
+</details>
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and contribution guidelines.
+
+```bash
+git clone https://github.com/leancoderkavy/meepo.git && cd meepo
+cargo build && cargo test --workspace && cargo clippy --workspace
+```
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 

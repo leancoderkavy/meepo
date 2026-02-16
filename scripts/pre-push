@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# pre-push hook — thorough checks before pushing to remote
+# Install: scripts/install-hooks.sh
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}[pre-push]${NC} Running full checks..."
+
+# 1. Build
+echo -n "  cargo build ... "
+if ! cargo build --workspace 2>/dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 2. Full test suite
+echo -n "  cargo test ... "
+if ! cargo test --workspace 2>/dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 3. Clippy (no warnings)
+echo -n "  cargo clippy ... "
+if ! cargo clippy --workspace -- -D warnings 2>/dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 4. Format check
+echo -n "  cargo fmt ... "
+if ! cargo fmt --all -- --check >/dev/null 2>&1; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "  Run ${YELLOW}cargo fmt --all${NC} to fix formatting."
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# ── Security checks (mirrors CI security job) ──
+
+# 5. Hardcoded secrets scan (non-test source code)
+echo -n "  secret scan ... "
+scan_rs() {
+    local pattern="$1"
+    find crates/ -name '*.rs' -print0 | xargs -0 awk -v pat="$pattern" '
+        /^#\[cfg\(test/ { in_test = 1 }
+        in_test { next }
+        $0 ~ pat && !/\/\/ / { print FILENAME ":" NR ": " $0 }
+    '
+}
+
+LEAK=0
+
+# Anthropic keys
+if [ -n "$(scan_rs 'sk-ant-api')" ]; then
+    echo -e "${RED}FAILED${NC}"
+    echo "  Found potential hardcoded Anthropic API key"
+    scan_rs 'sk-ant-api'
+    LEAK=1
+fi
+
+# OpenAI keys
+OPENAI=$(scan_rs 'sk-[a-zA-Z0-9]{20,}' | grep -v 'sk-ant-' | grep -v 'sk-secret-' || true)
+if [ -n "$OPENAI" ]; then
+    echo -e "${RED}FAILED${NC}"
+    echo "  Found potential hardcoded OpenAI API key"
+    echo "$OPENAI"
+    LEAK=1
+fi
+
+# Slack tokens
+if [ -n "$(scan_rs 'xoxb-[0-9]')" ]; then
+    echo -e "${RED}FAILED${NC}"
+    echo "  Found potential hardcoded Slack bot token"
+    LEAK=1
+fi
+
+# Bearer tokens (not in auth code)
+BEARER=$(scan_rs 'Bearer [A-Za-z0-9]' \
+    | grep -v 'strip_prefix' | grep -v 'starts_with' \
+    | grep -v 'extract_bearer' | grep -v 'parse()' \
+    | grep -v 'bearer_auth' || true)
+if [ -n "$BEARER" ]; then
+    echo -e "${RED}FAILED${NC}"
+    echo "  Found potential hardcoded Bearer token"
+    echo "$BEARER"
+    LEAK=1
+fi
+
+if [ "$LEAK" -ne 0 ]; then
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 6. Debug impls on secret-holding structs
+echo -n "  debug impl check ... "
+DBGOUT=""
+for f in $(find crates/ -name '*.rs' -not -path '*/test*'); do
+    MATCHES=$(awk '
+        /^#\[derive\(.*Debug/ { derive_line = NR }
+        /^pub struct/ && derive_line && (NR - derive_line) <= 3 { struct_name = $3; struct_line = NR; in_struct = 1 }
+        in_struct && /pub .*: / && /api_key|bot_token|auth_token/ && !/\/\// {
+            print FILENAME ":" struct_line ": struct " struct_name " derives Debug but has secret field"
+        }
+        in_struct && /^\}/ { in_struct = 0; derive_line = 0 }
+    ' "$f" 2>/dev/null || true)
+    if [ -n "$MATCHES" ]; then
+        DBGOUT="$DBGOUT$MATCHES\n"
+    fi
+done
+
+if [ -n "$DBGOUT" ]; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "  Structs with secret fields using derive(Debug):"
+    echo -e "  $DBGOUT"
+    echo -e "  Use a custom Debug impl that masks secrets."
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 7. .env files
+echo -n "  .env file check ... "
+if find . -name '.env' -o -name '.env.*' 2>/dev/null | grep -v node_modules | grep -v '.git/' | head -1 | grep -q .; then
+    echo -e "${RED}FAILED${NC}"
+    echo "  Found .env file(s) in repository:"
+    find . -name '.env' -o -name '.env.*' | grep -v node_modules | grep -v '.git/'
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+echo -e "${GREEN}[pre-push]${NC} All checks passed."

@@ -215,4 +215,110 @@ mod tests {
         let profile = UserProfile::default();
         assert!(profile.is_likely_active()); // Not enough data, assume active
     }
+
+    #[test]
+    fn test_user_profile_peak_day() {
+        let mut profile = UserProfile::default();
+        assert_eq!(profile.peak_day(), 0); // default when no data
+
+        profile.total_interactions = 20;
+        profile.active_days[4] = 15; // Friday
+        profile.active_days[0] = 5;  // Monday
+        assert_eq!(profile.peak_day(), 4);
+    }
+
+    #[test]
+    fn test_user_profile_preferred_channel_none() {
+        let profile = UserProfile::default();
+        assert!(profile.preferred_channel().is_none());
+    }
+
+    #[test]
+    fn test_user_profile_serde_roundtrip() {
+        let mut profile = UserProfile::default();
+        profile.total_interactions = 10;
+        profile.active_hours[9] = 5;
+        profile.channel_usage.insert("discord".to_string(), 7);
+
+        let json = serde_json::to_string(&profile).unwrap();
+        let parsed: UserProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.total_interactions, 10);
+        assert_eq!(parsed.active_hours[9], 5);
+        assert_eq!(parsed.channel_usage.get("discord"), Some(&7));
+    }
+
+    #[tokio::test]
+    async fn test_user_model_record_interaction() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+        let model = UserModel::new(db.clone());
+
+        model.record_interaction("discord").await.unwrap();
+
+        let prefs = db.get_preferences(Some("user_model")).await.unwrap();
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(prefs[0].key, "last_interaction");
+    }
+
+    #[tokio::test]
+    async fn test_user_model_build_profile_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+        let model = UserModel::new(db);
+
+        let profile = model.build_profile().await.unwrap();
+        assert_eq!(profile.total_interactions, 0);
+        assert_eq!(profile.peak_hour(), 9);
+    }
+
+    #[tokio::test]
+    async fn test_user_model_build_profile_with_conversations() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+
+        // Insert some conversations from a user (not "meepo")
+        for _ in 0..5 {
+            db.insert_conversation("discord", "alice", "hello", None)
+                .await
+                .unwrap();
+        }
+        // Meepo's own messages should be excluded
+        db.insert_conversation("discord", "meepo", "hi back", None)
+            .await
+            .unwrap();
+
+        let model = UserModel::new(db);
+        let profile = model.build_profile().await.unwrap();
+        assert_eq!(profile.total_interactions, 5);
+        assert_eq!(profile.channel_usage.get("discord"), Some(&5));
+    }
+
+    #[tokio::test]
+    async fn test_user_model_summarize_insufficient_data() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+        let model = UserModel::new(db);
+
+        let summary = model.summarize_for_agent().await.unwrap();
+        assert!(summary.contains("Not enough interaction data"));
+    }
+
+    #[tokio::test]
+    async fn test_user_model_summarize_with_data() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+
+        for _ in 0..10 {
+            db.insert_conversation("slack", "bob", "msg", None)
+                .await
+                .unwrap();
+        }
+
+        let model = UserModel::new(db);
+        let summary = model.summarize_for_agent().await.unwrap();
+        assert!(summary.contains("User Patterns"));
+        assert!(summary.contains("Most active"));
+        assert!(summary.contains("slack"));
+        assert!(summary.contains("10"));
+    }
 }

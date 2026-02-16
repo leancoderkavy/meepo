@@ -370,4 +370,128 @@ mod tests {
         assert!(msg.content.contains("t-42"));
         assert!(msg.content.contains("Report generated"));
     }
+
+    #[tokio::test]
+    async fn test_notify_suppressed_event_type() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let config = NotifyConfig {
+            enabled: true,
+            on_task_start: false,
+            ..Default::default()
+        };
+        let svc = NotificationService::new(config, tx);
+
+        svc.notify(NotifyEvent::TaskStarted {
+            task_id: "t-1".into(),
+            description: "test".into(),
+        })
+        .await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_should_notify_budget_always_true() {
+        let (tx, _rx) = mpsc::channel(16);
+        let config = NotifyConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let svc = NotificationService::new(config, tx);
+
+        assert!(svc.should_notify(&NotifyEvent::BudgetWarning {
+            period: "daily".into(),
+            spent: 5.0,
+            budget: 10.0,
+            percent: 50.0,
+        }));
+        assert!(svc.should_notify(&NotifyEvent::BudgetExceeded {
+            period: "daily".into(),
+            spent: 11.0,
+            budget: 10.0,
+        }));
+        assert!(svc.should_notify(&NotifyEvent::DigestMorning {
+            summary: "test".into(),
+        }));
+        assert!(svc.should_notify(&NotifyEvent::DigestEvening {
+            summary: "test".into(),
+        }));
+    }
+
+    #[test]
+    fn test_format_all_event_types() {
+        let (tx, _rx) = mpsc::channel(16);
+        let svc = NotificationService::new(NotifyConfig::default(), tx);
+
+        let events = vec![
+            NotifyEvent::TaskStarted {
+                task_id: "t1".into(),
+                description: "desc".into(),
+            },
+            NotifyEvent::TaskCompleted {
+                task_id: "t2".into(),
+                description: "desc".into(),
+                result_preview: "done".into(),
+            },
+            NotifyEvent::TaskFailed {
+                task_id: "t3".into(),
+                description: "desc".into(),
+                error: "oops".into(),
+            },
+            NotifyEvent::WatcherTriggered {
+                watcher_id: "w1".into(),
+                kind: "file".into(),
+                payload: "changed".into(),
+            },
+            NotifyEvent::AutonomousAction {
+                description: "doing stuff".into(),
+            },
+            NotifyEvent::Error {
+                context: "ctx".into(),
+                error: "err".into(),
+            },
+            NotifyEvent::BudgetWarning {
+                period: "daily".into(),
+                spent: 5.0,
+                budget: 10.0,
+                percent: 50.0,
+            },
+            NotifyEvent::BudgetExceeded {
+                period: "monthly".into(),
+                spent: 100.0,
+                budget: 50.0,
+            },
+            NotifyEvent::DigestMorning {
+                summary: "morning".into(),
+            },
+            NotifyEvent::DigestEvening {
+                summary: "evening".into(),
+            },
+        ];
+
+        for event in events {
+            let msg = svc.format_message(&event);
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_truncate_unicode_boundary() {
+        let s = "héllo wörld";
+        let t = truncate(s, 3);
+        // Should not panic on multi-byte chars
+        assert!(t.len() <= 3);
+    }
+
+    #[test]
+    fn test_notify_config_default() {
+        let config = NotifyConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.channel, ChannelType::IMessage);
+        assert!(config.on_task_start);
+        assert!(config.on_task_complete);
+        assert!(config.on_task_fail);
+        assert!(config.on_error);
+        assert!(config.quiet_hours.is_none());
+    }
 }

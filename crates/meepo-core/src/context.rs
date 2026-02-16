@@ -69,5 +69,57 @@ mod tests {
         let prompt = build_system_prompt("", "", "");
         assert!(prompt.contains("INSTRUCTIONS"));
         assert!(prompt.contains("CURRENT TIME"));
+        // Should NOT contain IDENTITY, MEMORY, or CONTEXT sections
+        assert!(!prompt.contains("IDENTITY"));
+        assert!(!prompt.contains("MEMORY"));
+        assert!(!prompt.contains("CONTEXT"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_partial() {
+        // Only soul, no memory or context
+        let prompt = build_system_prompt("I am meepo", "", "");
+        assert!(prompt.contains("IDENTITY"));
+        assert!(prompt.contains("meepo"));
+        assert!(!prompt.contains("MEMORY"));
+        assert!(!prompt.contains("CONTEXT"));
+
+        // Only memory
+        let prompt = build_system_prompt("", "User likes Rust", "");
+        assert!(!prompt.contains("IDENTITY"));
+        assert!(prompt.contains("MEMORY"));
+        assert!(prompt.contains("Rust"));
+        assert!(!prompt.contains("CONTEXT"));
+
+        // Only context
+        let prompt = build_system_prompt("", "", "Recent chat");
+        assert!(!prompt.contains("IDENTITY"));
+        assert!(!prompt.contains("MEMORY"));
+        assert!(prompt.contains("CONTEXT"));
+        assert!(prompt.contains("Recent chat"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_always_has_time_and_instructions() {
+        let prompt = build_system_prompt("soul", "mem", "ctx");
+        assert!(prompt.contains("CURRENT TIME"));
+        assert!(prompt.contains("INSTRUCTIONS"));
+        assert!(prompt.contains("autonomous agent"));
+        assert!(prompt.contains("Remember tool"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_section_order() {
+        let prompt = build_system_prompt("soul", "mem", "ctx");
+        let identity_pos = prompt.find("IDENTITY").unwrap();
+        let memory_pos = prompt.find("MEMORY").unwrap();
+        let context_pos = prompt.find("CONTEXT").unwrap();
+        let time_pos = prompt.find("CURRENT TIME").unwrap();
+        let instructions_pos = prompt.find("INSTRUCTIONS").unwrap();
+
+        assert!(identity_pos < memory_pos);
+        assert!(memory_pos < context_pos);
+        assert!(context_pos < time_pos);
+        assert!(time_pos < instructions_pos);
     }
 }

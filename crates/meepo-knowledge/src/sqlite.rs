@@ -2040,4 +2040,436 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_conversation_operations() -> Result<()> {
+        let temp_path = env::temp_dir().join(format!("test_convos_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert conversations
+        let id1 = db
+            .insert_conversation("discord", "alice", "Hello!", None)
+            .await?;
+        assert!(!id1.is_empty());
+
+        let id2 = db
+            .insert_conversation("slack", "bob", "Hi there", None)
+            .await?;
+        assert!(!id2.is_empty());
+        assert_ne!(id1, id2);
+
+        let id3 = db
+            .insert_conversation(
+                "discord",
+                "alice",
+                "How are you?",
+                Some(serde_json::json!({"mood": "happy"})),
+            )
+            .await?;
+        assert!(!id3.is_empty());
+
+        // Get recent conversations (all channels)
+        let all = db.get_recent_conversations(None, 10).await?;
+        assert_eq!(all.len(), 3);
+
+        // Get recent conversations (filtered by channel)
+        let discord_only = db.get_recent_conversations(Some("discord"), 10).await?;
+        assert_eq!(discord_only.len(), 2);
+
+        let slack_only = db.get_recent_conversations(Some("slack"), 10).await?;
+        assert_eq!(slack_only.len(), 1);
+        assert_eq!(slack_only[0].sender, "bob");
+
+        // Limit works
+        let limited = db.get_recent_conversations(None, 1).await?;
+        assert_eq!(limited.len(), 1);
+
+        // Empty channel returns nothing
+        let empty = db
+            .get_recent_conversations(Some("nonexistent"), 10)
+            .await?;
+        assert!(empty.is_empty());
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_watcher_operations() -> Result<()> {
+        let temp_path = env::temp_dir().join(format!("test_watchers_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert watcher
+        let id = db
+            .insert_watcher(
+                "cron",
+                serde_json::json!({"schedule": "0 9 * * *"}),
+                "Send morning summary",
+                "discord",
+            )
+            .await?;
+        assert!(!id.is_empty());
+
+        // Get active watchers
+        let active = db.get_active_watchers().await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].kind, "cron");
+        assert!(active[0].active);
+
+        // Get watcher by ID
+        let w = db.get_watcher(&id).await?;
+        assert!(w.is_some());
+        let w = w.unwrap();
+        assert_eq!(w.action, "Send morning summary");
+        assert_eq!(w.reply_channel, "discord");
+
+        // Get nonexistent watcher
+        let missing = db.get_watcher("nonexistent-id").await?;
+        assert!(missing.is_none());
+
+        // Deactivate watcher
+        db.update_watcher_active(&id, false).await?;
+        let active = db.get_active_watchers().await?;
+        assert!(active.is_empty());
+
+        // Reactivate
+        db.update_watcher_active(&id, true).await?;
+        let active = db.get_active_watchers().await?;
+        assert_eq!(active.len(), 1);
+
+        // Delete watcher
+        db.delete_watcher(&id).await?;
+        let active = db.get_active_watchers().await?;
+        assert!(active.is_empty());
+        let deleted = db.get_watcher(&id).await?;
+        assert!(deleted.is_none());
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_approval_operations() -> Result<()> {
+        let temp_path = env::temp_dir().join(format!("test_approvals_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert approval
+        let id = db
+            .insert_approval(
+                "send_email",
+                "Send weekly report to team",
+                "medium",
+                None,
+                "Should I send the weekly report?",
+            )
+            .await?;
+        assert!(!id.is_empty());
+
+        // Get pending approvals
+        let pending = db.get_pending_approvals().await?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].action_type, "send_email");
+        assert_eq!(pending[0].status, "pending");
+        assert_eq!(pending[0].risk_level, "medium");
+
+        // Approve it
+        db.decide_approval(&id, true).await?;
+        let pending = db.get_pending_approvals().await?;
+        assert!(pending.is_empty());
+
+        // Insert another and reject
+        let id2 = db
+            .insert_approval(
+                "delete_file",
+                "Delete old logs",
+                "high",
+                Some("goal-1"),
+                "Should I delete old logs?",
+            )
+            .await?;
+        db.decide_approval(&id2, false).await?;
+        let pending = db.get_pending_approvals().await?;
+        assert!(pending.is_empty());
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usage_log_operations() -> Result<()> {
+        let temp_path = env::temp_dir().join(format!("test_usage_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert usage log entry
+        db.insert_usage_log(
+            "claude-sonnet-4-20250514",
+            1000,
+            500,
+            200,
+            100,
+            0.015,
+            "agent",
+            Some("discord"),
+            3,
+            "read_file,write_file,search",
+            "session-1",
+        )
+        .await?;
+
+        db.insert_usage_log(
+            "claude-sonnet-4-20250514",
+            2000,
+            1000,
+            0,
+            0,
+            0.030,
+            "watcher",
+            Some("slack"),
+            1,
+            "web_search",
+            "",
+        )
+        .await?;
+
+        // Get cost for today
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let cost = db.get_usage_cost_for_date(&today).await?;
+        assert!((cost - 0.045).abs() < 0.001);
+
+        // Get cost for range
+        let range_cost = db.get_usage_cost_for_range(&today, &today).await?;
+        assert!((range_cost - 0.045).abs() < 0.001);
+
+        // Get usage summary
+        let summary = db.get_usage_summary(&today, &today).await?;
+        assert_eq!(summary.total_input_tokens, 3000);
+        assert_eq!(summary.total_output_tokens, 1500);
+        assert_eq!(summary.total_api_calls, 2);
+        assert_eq!(summary.total_tool_calls, 4);
+        assert!((summary.estimated_cost_usd - 0.045).abs() < 0.001);
+        assert!(summary.by_source.contains_key("agent"));
+        assert!(summary.by_source.contains_key("watcher"));
+        assert!(summary.by_model.contains_key("claude-sonnet-4-20250514"));
+
+        // Export CSV
+        let csv = db.export_usage_csv(&today, &today).await?;
+        assert!(csv.starts_with("timestamp,model,input_tokens,"));
+        assert!(csv.contains("claude-sonnet-4-20250514"));
+        assert!(csv.contains("agent"));
+        assert!(csv.contains("watcher"));
+        // Should have header + 2 data rows
+        let line_count = csv.lines().count();
+        assert_eq!(line_count, 3);
+
+        // Cost for nonexistent date
+        let zero = db.get_usage_cost_for_date("2000-01-01").await?;
+        assert!((zero - 0.0).abs() < 0.001);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_old_conversations() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_cleanup_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Insert a conversation (it will have today's timestamp)
+        db.insert_conversation("discord", "alice", "recent msg", None)
+            .await?;
+
+        // Cleanup with 30 days retention — recent msg should survive
+        let deleted = db.cleanup_old_conversations(30).await?;
+        assert_eq!(deleted, 0);
+
+        let remaining = db.get_recent_conversations(None, 10).await?;
+        assert_eq!(remaining.len(), 1);
+
+        // Cleanup with 1 day retention — recent msg still survives (inserted just now)
+        let deleted = db.cleanup_old_conversations(1).await?;
+        assert_eq!(deleted, 0);
+
+        let remaining = db.get_recent_conversations(None, 10).await?;
+        assert_eq!(remaining.len(), 1);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_entity_with_metadata() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_entity_meta_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        let meta = serde_json::json!({"role": "developer", "team": "backend"});
+        let id = db.insert_entity("Alice", "person", Some(meta.clone())).await?;
+
+        let entity = db.get_entity(&id).await?.unwrap();
+        assert_eq!(entity.name, "Alice");
+        assert_eq!(entity.entity_type, "person");
+        assert_eq!(entity.metadata.unwrap(), meta);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_entity_nonexistent() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_entity_none_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        let result = db.get_entity("nonexistent-id").await?;
+        assert!(result.is_none());
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_all_entities() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_all_entities_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        // Empty initially
+        let all = db.get_all_entities().await?;
+        assert!(all.is_empty());
+
+        // Add some
+        db.insert_entity("A", "concept", None).await?;
+        db.insert_entity("B", "person", None).await?;
+        db.insert_entity("C", "concept", None).await?;
+
+        let all = db.get_all_entities().await?;
+        assert_eq!(all.len(), 3);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_entities_by_type() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_search_type_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        db.insert_entity("Rust", "language", None).await?;
+        db.insert_entity("Python", "language", None).await?;
+        db.insert_entity("Alice", "person", None).await?;
+
+        // Search by type
+        let langs = db.search_entities("", Some("language")).await?;
+        assert_eq!(langs.len(), 2);
+
+        // Search by name
+        let rust = db.search_entities("Rust", None).await?;
+        assert_eq!(rust.len(), 1);
+        assert_eq!(rust[0].name, "Rust");
+
+        // Search with no results
+        let none = db.search_entities("nonexistent", None).await?;
+        assert!(none.is_empty());
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_relationship_with_metadata() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_rel_meta_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        let s = db.insert_entity("Alice", "person", None).await?;
+        let t = db.insert_entity("Backend", "team", None).await?;
+
+        let meta = serde_json::json!({"since": "2024-01-01"});
+        let rel_id = db
+            .insert_relationship(&s, &t, "member_of", Some(meta.clone()))
+            .await?;
+        assert!(!rel_id.is_empty());
+
+        let rels = db.get_relationships_for(&s).await?;
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].relation_type, "member_of");
+        assert_eq!(rels[0].metadata.as_ref().unwrap(), &meta);
+
+        // Also appears when querying from target side
+        let rels_t = db.get_relationships_for(&t).await?;
+        assert_eq!(rels_t.len(), 1);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usage_summary_single_day_period() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_usage_period_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Empty summary
+        let summary = db.get_usage_summary(&today, &today).await?;
+        assert_eq!(summary.total_api_calls, 0);
+        assert_eq!(summary.period, today);
+
+        // Range period format
+        let summary = db.get_usage_summary("2024-01-01", "2024-01-31").await?;
+        assert_eq!(summary.period, "2024-01-01 to 2024-01-31");
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_multiple_watchers() -> Result<()> {
+        let temp_path =
+            env::temp_dir().join(format!("test_multi_watch_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&temp_path);
+        let db = KnowledgeDb::new(&temp_path)?;
+
+        let id1 = db
+            .insert_watcher("cron", serde_json::json!({}), "task1", "discord")
+            .await?;
+        let id2 = db
+            .insert_watcher("webhook", serde_json::json!({}), "task2", "slack")
+            .await?;
+        let _id3 = db
+            .insert_watcher("poll", serde_json::json!({}), "task3", "email")
+            .await?;
+
+        // All active
+        let active = db.get_active_watchers().await?;
+        assert_eq!(active.len(), 3);
+
+        // Deactivate one
+        db.update_watcher_active(&id1, false).await?;
+        let active = db.get_active_watchers().await?;
+        assert_eq!(active.len(), 2);
+
+        // Delete another
+        db.delete_watcher(&id2).await?;
+        let active = db.get_active_watchers().await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].action, "task3");
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
 }

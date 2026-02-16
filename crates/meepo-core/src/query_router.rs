@@ -388,4 +388,157 @@ mod tests {
         assert_eq!(strategy.complexity, QueryComplexity::NoRetrieval);
         assert!(!strategy.search_knowledge);
     }
+
+    #[test]
+    fn test_heuristic_math() {
+        assert_eq!(
+            classify_heuristic("what is 2 + 2?"),
+            QueryComplexity::NoRetrieval
+        );
+        assert_eq!(
+            classify_heuristic("what is 10 * 5?"),
+            QueryComplexity::NoRetrieval
+        );
+    }
+
+    #[test]
+    fn test_heuristic_date_queries() {
+        assert_eq!(
+            classify_heuristic("what day is it today?"),
+            QueryComplexity::NoRetrieval
+        );
+        assert_eq!(
+            classify_heuristic("what date is the meeting?"),
+            QueryComplexity::NoRetrieval
+        );
+    }
+
+    #[test]
+    fn test_heuristic_more_greetings() {
+        assert_eq!(classify_heuristic("bye"), QueryComplexity::NoRetrieval);
+        assert_eq!(classify_heuristic("ok"), QueryComplexity::NoRetrieval);
+        assert_eq!(classify_heuristic("yes"), QueryComplexity::NoRetrieval);
+        assert_eq!(classify_heuristic("no"), QueryComplexity::NoRetrieval);
+        assert_eq!(
+            classify_heuristic("thank you"),
+            QueryComplexity::NoRetrieval
+        );
+    }
+
+    #[test]
+    fn test_heuristic_recall_variants() {
+        assert_eq!(
+            classify_heuristic("tell me about the project"),
+            QueryComplexity::SingleStep
+        );
+        assert_eq!(
+            classify_heuristic("who is Alice?"),
+            QueryComplexity::SingleStep
+        );
+        assert_eq!(
+            classify_heuristic("what is my schedule?"),
+            QueryComplexity::SingleStep
+        );
+    }
+
+    #[test]
+    fn test_heuristic_web_signals() {
+        assert_eq!(
+            classify_heuristic("search for Rust tutorials"),
+            QueryComplexity::MultiSource
+        );
+        assert_eq!(
+            classify_heuristic("what's happening in the world?"),
+            QueryComplexity::MultiSource
+        );
+        assert_eq!(
+            classify_heuristic("trending topics on Twitter"),
+            QueryComplexity::MultiSource
+        );
+    }
+
+    #[test]
+    fn test_heuristic_complex_signals() {
+        assert_eq!(
+            classify_heuristic("research the best approach for this"),
+            QueryComplexity::MultiHop
+        );
+        assert_eq!(
+            classify_heuristic("step by step guide to deploy"),
+            QueryComplexity::MultiHop
+        );
+        assert_eq!(
+            classify_heuristic("what are the implications of this change?"),
+            QueryComplexity::MultiHop
+        );
+        assert_eq!(
+            classify_heuristic("plan for next week"),
+            QueryComplexity::MultiHop
+        );
+    }
+
+    #[test]
+    fn test_heuristic_action_commands() {
+        assert_eq!(
+            classify_heuristic("schedule a meeting for tomorrow"),
+            QueryComplexity::SingleStep
+        );
+        assert_eq!(
+            classify_heuristic("remind me to call Bob"),
+            QueryComplexity::SingleStep
+        );
+        assert_eq!(
+            classify_heuristic("run the tests"),
+            QueryComplexity::SingleStep
+        );
+        assert_eq!(
+            classify_heuristic("stop the server"),
+            QueryComplexity::SingleStep
+        );
+    }
+
+    #[test]
+    fn test_heuristic_long_query_defaults_multi_source() {
+        let long = "I need you to look at this really long and detailed query that has many words and should trigger the multi-source default path";
+        assert_eq!(classify_heuristic(long), QueryComplexity::MultiSource);
+    }
+
+    #[test]
+    fn test_heuristic_medium_query_defaults_single_step() {
+        assert_eq!(
+            classify_heuristic("how are you doing today my friend"),
+            QueryComplexity::SingleStep
+        );
+    }
+
+    #[test]
+    fn test_strategy_fields() {
+        let no = RetrievalStrategy::no_retrieval();
+        assert!(!no.search_knowledge);
+        assert!(!no.search_web);
+        assert!(no.load_history);
+        assert_eq!(no.knowledge_limit, 0);
+
+        let single = RetrievalStrategy::single_step();
+        assert!(single.search_knowledge);
+        assert!(!single.search_web);
+        assert_eq!(single.knowledge_limit, 5);
+
+        let multi = RetrievalStrategy::multi_source();
+        assert!(multi.search_knowledge);
+        assert!(multi.search_web);
+        assert!(multi.graph_expand);
+        assert_eq!(multi.knowledge_limit, 10);
+
+        let hop = RetrievalStrategy::multi_hop();
+        assert!(hop.corrective_rag);
+        assert_eq!(hop.knowledge_limit, 15);
+    }
+
+    #[test]
+    fn test_query_router_config_default() {
+        let config = QueryRouterConfig::default();
+        assert!(!config.use_llm_classification);
+        assert!(config.enabled);
+    }
 }

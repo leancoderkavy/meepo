@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400">
+  <defs>
+    <linearGradient id="caveBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1A1410"/>
+      <stop offset="50%" style="stop-color:#221C16"/>
+      <stop offset="100%" style="stop-color:#2A2420"/>
+    </linearGradient>
+    <linearGradient id="goldLine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#D4A843;stop-opacity:0"/>
+      <stop offset="50%" style="stop-color:#D4A843;stop-opacity:0.6"/>
+      <stop offset="100%" style="stop-color:#D4A843;stop-opacity:0"/>
+    </linearGradient>
+    <radialGradient id="spotLeft" cx="27%" cy="55%" r="25%">
+      <stop offset="0%" style="stop-color:#3B6B8A;stop-opacity:0.08"/>
+      <stop offset="100%" style="stop-color:#3B6B8A;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="spotRight" cx="73%" cy="55%" r="25%">
+      <stop offset="0%" style="stop-color:#3B6B8A;stop-opacity:0.08"/>
+      <stop offset="100%" style="stop-color:#3B6B8A;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="660" height="400" fill="url(#caveBg)"/>
+
+  <!-- Subtle texture spots -->
+  <rect width="660" height="400" fill="url(#spotLeft)"/>
+  <rect width="660" height="400" fill="url(#spotRight)"/>
+
+  <!-- Top decorative line -->
+  <rect x="0" y="48" width="660" height="1" fill="url(#goldLine)"/>
+
+  <!-- Title -->
+  <text x="330" y="36" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="22" font-weight="600" fill="#D4A843" text-anchor="middle" letter-spacing="3">MEEPO</text>
+
+  <!-- Subtitle -->
+  <text x="330" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="11" fill="#C4A265" text-anchor="middle" letter-spacing="1.5" opacity="0.7">DIVIDED WE STAND</text>
+
+  <!-- Arrow indicator -->
+  <g opacity="0.5">
+    <path d="M290 210 L330 210 L370 210" fill="none" stroke="#C4A265" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <polygon points="370,205 382,210 370,215" fill="#C4A265"/>
+  </g>
+
+  <!-- Drop hint text -->
+  <text x="330" y="240" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="10" fill="#C4A265" text-anchor="middle" opacity="0.45">Drag to Applications</text>
+
+  <!-- Bottom decorative line -->
+  <rect x="0" y="350" width="660" height="1" fill="url(#goldLine)"/>
+
+  <!-- Bottom info -->
+  <text x="330" y="375" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="9" fill="#C4A265" text-anchor="middle" opacity="0.35">Local AI Agent · 75+ Tools · macOS</text>
+
+  <!-- Corner accents -->
+  <path d="M20 20 L40 20 M20 20 L20 40" fill="none" stroke="#D4A843" stroke-width="1" opacity="0.3"/>
+  <path d="M640 20 L620 20 M640 20 L640 40" fill="none" stroke="#D4A843" stroke-width="1" opacity="0.3"/>
+  <path d="M20 380 L40 380 M20 380 L20 360" fill="none" stroke="#D4A843" stroke-width="1" opacity="0.3"/>
+  <path d="M640 380 L620 380 M640 380 L640 360" fill="none" stroke="#D4A843" stroke-width="1" opacity="0.3"/>
+</svg>

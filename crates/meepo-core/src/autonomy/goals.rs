@@ -249,5 +249,164 @@ mod tests {
         assert_eq!(GoalDecision::Act.to_string(), "act");
         assert_eq!(GoalDecision::Defer.to_string(), "defer");
         assert_eq!(GoalDecision::Complete.to_string(), "complete");
+        assert_eq!(GoalDecision::Abandon.to_string(), "abandon");
+        assert_eq!(GoalDecision::Investigate.to_string(), "investigate");
+    }
+
+    #[test]
+    fn test_goal_decision_serde_roundtrip() {
+        let decisions = [
+            GoalDecision::Act,
+            GoalDecision::Defer,
+            GoalDecision::Complete,
+            GoalDecision::Abandon,
+            GoalDecision::Investigate,
+        ];
+        for d in &decisions {
+            let json = serde_json::to_string(d).unwrap();
+            let parsed: GoalDecision = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, d);
+        }
+    }
+
+    #[test]
+    fn test_parse_evaluations_invalid_json() {
+        let db = Arc::new(
+            KnowledgeDb::new(&tempfile::TempDir::new().unwrap().path().join("test.db")).unwrap(),
+        );
+        let evaluator = GoalEvaluator::new(db, 0.7);
+        let evals = evaluator.parse_evaluations("this is not json at all");
+        assert!(evals.is_empty());
+    }
+
+    #[test]
+    fn test_parse_evaluations_fenced_json() {
+        let db = Arc::new(
+            KnowledgeDb::new(&tempfile::TempDir::new().unwrap().path().join("test.db")).unwrap(),
+        );
+        let evaluator = GoalEvaluator::new(db, 0.7);
+        let response = "Here's my evaluation:\n```json\n[{\"goal_id\": \"g1\", \"decision\": \"defer\", \"confidence\": 0.4, \"reasoning\": \"Not ready\", \"action_prompt\": null}]\n```";
+        let evals = evaluator.parse_evaluations(response);
+        assert_eq!(evals.len(), 1);
+        assert_eq!(evals[0].decision, GoalDecision::Defer);
+    }
+
+    #[test]
+    fn test_build_evaluation_prompt_with_goals() {
+        let db = Arc::new(
+            KnowledgeDb::new(&tempfile::TempDir::new().unwrap().path().join("test.db")).unwrap(),
+        );
+        let evaluator = GoalEvaluator::new(db, 0.7);
+        let goals = vec![Goal {
+            id: "g1".to_string(),
+            description: "Review PRs".to_string(),
+            status: "active".to_string(),
+            priority: 3,
+            success_criteria: Some("All PRs reviewed".to_string()),
+            strategy: Some("Check GitHub".to_string()),
+            check_interval_secs: 3600,
+            last_checked_at: None,
+            source_channel: Some("discord".to_string()),
+            source: "user".to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+        let prompt = evaluator.build_evaluation_prompt(&goals);
+        assert!(prompt.is_some());
+        let prompt = prompt.unwrap();
+        assert!(prompt.contains("Review PRs"));
+        assert!(prompt.contains("All PRs reviewed"));
+        assert!(prompt.contains("Check GitHub"));
+        assert!(prompt.contains("goal_id"));
+    }
+
+    #[test]
+    fn test_extract_json_array_plain_fences() {
+        let input = "Result:\n```\n[{\"goal_id\": \"g1\"}]\n```";
+        assert_eq!(extract_json_array(input), "[{\"goal_id\": \"g1\"}]");
+    }
+
+    #[test]
+    fn test_extract_json_array_no_fences_no_brackets() {
+        let input = "no json here";
+        assert_eq!(extract_json_array(input), "no json here");
+    }
+
+    #[tokio::test]
+    async fn test_apply_evaluations() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+        let evaluator = GoalEvaluator::new(db.clone(), 0.5);
+
+        // Create goals
+        let g1 = db
+            .insert_goal("Goal A", 3, 3600, Some("Done A"), None, "user")
+            .await
+            .unwrap();
+        let g2 = db
+            .insert_goal("Goal B", 2, 3600, None, None, "user")
+            .await
+            .unwrap();
+        let g3 = db
+            .insert_goal("Goal C", 1, 3600, None, None, "user")
+            .await
+            .unwrap();
+
+        let evals = vec![
+            GoalEvaluation {
+                goal_id: g1.clone(),
+                decision: GoalDecision::Complete,
+                reasoning: "All done".to_string(),
+                confidence: 0.9,
+                action_prompt: None,
+            },
+            GoalEvaluation {
+                goal_id: g2.clone(),
+                decision: GoalDecision::Act,
+                reasoning: "Time to act".to_string(),
+                confidence: 0.8,
+                action_prompt: Some("Do the thing".to_string()),
+            },
+            GoalEvaluation {
+                goal_id: g3.clone(),
+                decision: GoalDecision::Abandon,
+                reasoning: "No longer relevant".to_string(),
+                confidence: 0.7,
+                action_prompt: None,
+            },
+        ];
+
+        let actions = evaluator.apply_evaluations(&evals).await.unwrap();
+        // Only g2 (Act with confidence >= 0.5) should be in actions
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].goal_id, g2);
+
+        // g1 completed, g3 abandoned (failed), g2 still active (Act just marks checked)
+        let active = db.get_active_goals().await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, g2);
+    }
+
+    #[tokio::test]
+    async fn test_apply_evaluations_low_confidence_act() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Arc::new(KnowledgeDb::new(&dir.path().join("test.db")).unwrap());
+        let evaluator = GoalEvaluator::new(db.clone(), 0.8);
+
+        let g1 = db
+            .insert_goal("Goal X", 3, 3600, None, None, "user")
+            .await
+            .unwrap();
+
+        let evals = vec![GoalEvaluation {
+            goal_id: g1,
+            decision: GoalDecision::Act,
+            reasoning: "Maybe".to_string(),
+            confidence: 0.5, // below min_confidence of 0.8
+            action_prompt: Some("Do it".to_string()),
+        }];
+
+        let actions = evaluator.apply_evaluations(&evals).await.unwrap();
+        assert!(actions.is_empty()); // confidence too low
     }
 }

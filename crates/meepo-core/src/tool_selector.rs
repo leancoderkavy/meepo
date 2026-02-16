@@ -405,4 +405,123 @@ mod tests {
         let selected = select_tools(&api, "hello", &tools, &config).await.unwrap();
         assert_eq!(selected.len(), tools.len());
     }
+
+    #[test]
+    fn test_heuristic_calendar_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("check my calendar for meetings", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"read_calendar"));
+        assert!(names.contains(&"create_calendar_event"));
+    }
+
+    #[test]
+    fn test_heuristic_reminder_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("remind me to buy groceries", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"create_reminder"));
+    }
+
+    #[test]
+    fn test_heuristic_file_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("read the file at /tmp/test.txt", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+    }
+
+    #[test]
+    fn test_heuristic_browser_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("open a browser tab to google.com", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"browser_open_tab"));
+    }
+
+    #[test]
+    fn test_heuristic_command_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("run a command in the terminal", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"run_command"));
+    }
+
+    #[test]
+    fn test_heuristic_watcher_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("monitor this cron job", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        // always_include tools should be present
+        assert!(names.contains(&"remember"));
+    }
+
+    #[test]
+    fn test_heuristic_knowledge_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("what do you know about Rust?", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"remember"));
+        assert!(names.contains(&"recall"));
+        assert!(names.contains(&"search_knowledge"));
+    }
+
+    #[test]
+    fn test_heuristic_deduplicates() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        // "remember" is both always-include and matched by "memory" keyword
+        let selected = select_heuristic("search my memory and knowledge", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        let remember_count = names.iter().filter(|&&n| n == "remember").count();
+        assert_eq!(remember_count, 1);
+    }
+
+    #[test]
+    fn test_heuristic_respects_max_tools() {
+        let config = ToolSelectorConfig {
+            max_tools: 3,
+            ..Default::default()
+        };
+        let tools = sample_tools();
+        let selected =
+            select_heuristic("search for code in files and run command", &tools, &config);
+        assert!(selected.len() <= 3);
+    }
+
+    #[test]
+    fn test_tool_selector_config_default() {
+        let config = ToolSelectorConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.max_tools, 15);
+        assert_eq!(config.activation_threshold, 20);
+        assert!(config.always_include.contains(&"remember".to_string()));
+        assert!(config.always_include.contains(&"recall".to_string()));
+    }
+
+    #[test]
+    fn test_heuristic_pr_query() {
+        let config = ToolSelectorConfig::default();
+        let tools = sample_tools();
+        let selected = select_heuristic("create a pull request for this feature", &tools, &config);
+
+        let names: Vec<&str> = selected.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"make_pr"));
+    }
 }

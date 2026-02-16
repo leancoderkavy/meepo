@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# pre-commit hook — fast checks before every commit
+# Install: scripts/install-hooks.sh
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}[pre-commit]${NC} Running checks..."
+
+# 1. Format check (fast, catches style issues immediately)
+echo -n "  cargo fmt ... "
+if ! cargo fmt --all -- --check >/dev/null 2>&1; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "  Run ${YELLOW}cargo fmt --all${NC} to fix formatting."
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 2. Clippy (catches warnings and common mistakes)
+echo -n "  cargo clippy ... "
+if ! cargo clippy --workspace -- -D warnings 2>/dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 3. Build check (ensures everything compiles)
+echo -n "  cargo check ... "
+if ! cargo check --workspace 2>/dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    exit 1
+fi
+echo -e "${GREEN}ok${NC}"
+
+# 4. Quick secret scan on staged files only
+echo -n "  secret scan (staged) ... "
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(rs|toml)$' || true)
+if [ -n "$STAGED" ]; then
+    LEAK=0
+
+    # Scan staged .rs files outside test modules
+    RS_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
+    if [ -n "$RS_FILES" ]; then
+        # Check for hardcoded API keys in non-test code
+        for f in $RS_FILES; do
+            MATCHES=$(awk '
+                /^#\[cfg\(test/ { in_test = 1 }
+                in_test { next }
+                /sk-ant-api/ || /xoxb-[0-9]/ { print FILENAME ":" NR ": " $0 }
+            ' "$f" 2>/dev/null || true)
+            if [ -n "$MATCHES" ]; then
+                echo -e "${RED}FAILED${NC}"
+                echo -e "  Potential hardcoded secret in staged file:"
+                echo "  $MATCHES"
+                LEAK=1
+            fi
+        done
+
+        # Check for derive(Debug) on secret-holding structs
+        for f in $RS_FILES; do
+            MATCHES=$(awk '
+                /^#\[derive\(.*Debug/ { derive_line = NR }
+                /^pub struct/ && derive_line && (NR - derive_line) <= 3 { struct_name = $3; struct_line = NR; in_struct = 1 }
+                in_struct && /pub .*: / && /api_key|bot_token|auth_token/ && !/\/\// {
+                    print FILENAME ":" struct_line ": struct " struct_name " derives Debug but has secret field"
+                }
+                in_struct && /^\}/ { in_struct = 0; derive_line = 0 }
+            ' "$f" 2>/dev/null || true)
+            if [ -n "$MATCHES" ]; then
+                echo -e "${RED}FAILED${NC}"
+                echo -e "  Unsafe Debug derive on secret-holding struct:"
+                echo "  $MATCHES"
+                LEAK=1
+            fi
+        done
+    fi
+
+    # Check for .env files being staged
+    ENV_FILES=$(echo "$STAGED" | grep -E '^\.env' || true)
+    if [ -n "$ENV_FILES" ]; then
+        echo -e "${RED}FAILED${NC}"
+        echo -e "  Attempting to commit .env file(s): $ENV_FILES"
+        LEAK=1
+    fi
+
+    if [ "$LEAK" -ne 0 ]; then
+        exit 1
+    fi
+fi
+echo -e "${GREEN}ok${NC}"
+
+echo -e "${GREEN}[pre-commit]${NC} All checks passed."

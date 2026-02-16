@@ -1305,3 +1305,487 @@ fn expand_env_vars(s: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── mask_secret ─────────────────────────────────────────────
+
+    #[test]
+    fn test_mask_secret_empty() {
+        assert_eq!(mask_secret(""), "(empty)");
+    }
+
+    #[test]
+    fn test_mask_secret_short() {
+        assert_eq!(mask_secret("abc"), "***");
+        assert_eq!(mask_secret("abcdefg"), "***");
+    }
+
+    #[test]
+    fn test_mask_secret_long() {
+        assert_eq!(mask_secret("abcdefgh"), "abc...efgh");
+        assert_eq!(mask_secret("sk-ant-api03-xxxxxxxxxxxx-yyyy"), "sk-...yyyy");
+    }
+
+    #[test]
+    fn test_mask_secret_exactly_8_chars() {
+        let masked = mask_secret("12345678");
+        assert!(masked.starts_with("123"));
+        assert!(masked.ends_with("5678"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn test_mask_secret_multibyte_utf8() {
+        let masked = mask_secret("🔑🔑🔑🔑🔑🔑🔑🔑");
+        assert!(masked.contains("..."));
+        let masked2 = mask_secret("密码密码密码密码");
+        assert!(masked2.contains("..."));
+    }
+
+    // ── expand_env_vars ─────────────────────────────────────────
+
+    #[test]
+    fn test_expand_env_vars_allowed() {
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key-123") };
+        let result = expand_env_vars("key = \"${ANTHROPIC_API_KEY}\"");
+        assert_eq!(result, "key = \"test-key-123\"");
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+    }
+
+    #[test]
+    fn test_expand_env_vars_disallowed() {
+        let result = expand_env_vars("val = \"${PATH}\"");
+        assert_eq!(result, "val = \"${PATH}\"");
+    }
+
+    #[test]
+    fn test_expand_env_vars_missing() {
+        unsafe { std::env::remove_var("TAVILY_API_KEY") };
+        let result = expand_env_vars("key = \"${TAVILY_API_KEY}\"");
+        assert_eq!(result, "key = \"\"");
+    }
+
+    #[test]
+    fn test_expand_env_vars_multiple() {
+        unsafe { std::env::set_var("HOME", "/home/test") };
+        unsafe { std::env::set_var("USER", "testuser") };
+        let result = expand_env_vars("${HOME}/.meepo/${USER}");
+        assert_eq!(result, "/home/test/.meepo/testuser");
+        unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("USER") };
+    }
+
+    #[test]
+    fn test_expand_env_vars_no_closing_brace() {
+        let result = expand_env_vars("broken = \"${HOME\"");
+        assert_eq!(result, "broken = \"${HOME\"");
+    }
+
+    #[test]
+    fn test_expand_env_vars_no_vars() {
+        let input = "plain string with no variables";
+        assert_eq!(expand_env_vars(input), input);
+    }
+
+    #[test]
+    fn test_expand_env_vars_adjacent() {
+        unsafe { std::env::set_var("HOME", "/h") };
+        unsafe { std::env::set_var("USER", "u") };
+        let result = expand_env_vars("${HOME}${USER}");
+        assert_eq!(result, "/hu");
+        unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("USER") };
+    }
+
+    #[test]
+    fn test_expand_env_vars_empty_name() {
+        let result = expand_env_vars("val = \"${}\"");
+        assert_eq!(result, "val = \"${}\"");
+    }
+
+    // ── config_dir ──────────────────────────────────────────────
+
+    #[test]
+    fn test_config_dir_returns_dot_meepo() {
+        let dir = config_dir();
+        assert!(dir.ends_with(".meepo"));
+    }
+
+    // ── Default values ──────────────────────────────────────────
+
+    #[test]
+    fn test_defaults_agent() {
+        assert_eq!(default_system_prompt_file(), "SOUL.md");
+        assert_eq!(default_memory_file(), "MEMORY.md");
+    }
+
+    #[test]
+    fn test_defaults_providers() {
+        assert_eq!(default_base_url(), "https://api.anthropic.com");
+        assert_eq!(default_openai_base_url(), "https://api.openai.com");
+        assert_eq!(default_openai_model(), "gpt-4o");
+        assert_eq!(default_openai_max_tokens(), 4096);
+        assert_eq!(default_google_model(), "gemini-2.0-flash");
+        assert_eq!(default_google_max_tokens(), 4096);
+        assert_eq!(default_ollama_base_url(), "http://localhost:11434");
+        assert_eq!(default_ollama_model(), "llama3.2");
+        assert_eq!(default_ollama_max_tokens(), 4096);
+        assert_eq!(default_compat_max_tokens(), 4096);
+    }
+
+    #[test]
+    fn test_defaults_channels() {
+        assert_eq!(default_poll_interval(), 3);
+        assert_eq!(default_email_poll_interval(), 10);
+        assert_eq!(default_subject_prefix(), "[meepo]");
+        assert_eq!(default_slack_poll_interval(), 3);
+        assert_eq!(default_alexa_poll_interval(), 3);
+    }
+
+    #[test]
+    fn test_defaults_watchers() {
+        assert_eq!(default_max_concurrent(), 50);
+        assert_eq!(default_min_poll(), 30);
+    }
+
+    #[test]
+    fn test_defaults_code() {
+        assert_eq!(default_coding_agent_path(), "claude");
+        assert_eq!(default_gh_path(), "gh");
+        assert_eq!(default_workspace(), "~/Coding");
+    }
+
+    #[test]
+    fn test_defaults_filesystem() {
+        let dirs = default_allowed_directories();
+        assert_eq!(dirs, vec!["~/Coding".to_string()]);
+        let fs = FilesystemConfig::default();
+        assert_eq!(fs.allowed_directories, dirs);
+    }
+
+    #[test]
+    fn test_defaults_orchestrator() {
+        assert_eq!(default_max_concurrent_subtasks(), 5);
+        assert_eq!(default_max_subtasks_per_request(), 10);
+        assert_eq!(default_parallel_timeout_secs(), 120);
+        assert_eq!(default_background_timeout_secs(), 600);
+        assert_eq!(default_max_background_groups(), 3);
+        let oc = default_orchestrator_config();
+        assert_eq!(oc.max_concurrent_subtasks, 5);
+    }
+
+    #[test]
+    fn test_defaults_autonomy() {
+        assert!(default_autonomy_enabled());
+        assert_eq!(default_tick_interval(), 30);
+        assert_eq!(default_max_goals(), 50);
+        assert_eq!(default_preference_decay_days(), 30);
+        assert!((default_min_confidence() - 0.5).abs() < f64::EPSILON);
+        assert_eq!(default_max_tokens_per_tick(), 4096);
+        assert!(default_send_acknowledgments());
+        assert_eq!(default_daily_plan_hour(), 7);
+        assert_eq!(default_max_calls_per_minute(), 10);
+        let ac = default_autonomy_config();
+        assert!(ac.enabled);
+    }
+
+    #[test]
+    fn test_defaults_mcp() {
+        let mcp = McpServerConfig::default();
+        assert!(mcp.enabled);
+        assert!(mcp.exposed_tools.is_empty());
+        let mc = McpConfig::default();
+        assert!(mc.clients.is_empty());
+    }
+
+    #[test]
+    fn test_defaults_a2a() {
+        let a2a = A2aConfig::default();
+        assert!(!a2a.enabled);
+        assert_eq!(a2a.port, 8081);
+        assert!(a2a.auth_token.is_empty());
+    }
+
+    #[test]
+    fn test_defaults_skills() {
+        let s = SkillsConfig::default();
+        assert!(!s.enabled);
+        assert_eq!(s.dir, "~/.meepo/skills");
+    }
+
+    #[test]
+    fn test_defaults_browser() {
+        let b = BrowserConfig::default();
+        assert!(b.enabled);
+        assert_eq!(b.default_browser, "safari");
+    }
+
+    #[test]
+    fn test_defaults_gateway() {
+        let g = GatewayConfig::default();
+        assert!(!g.enabled);
+        assert_eq!(g.bind, "127.0.0.1");
+        assert_eq!(g.port, 18789);
+    }
+
+    #[test]
+    fn test_defaults_voice() {
+        let v = VoiceConfig::default();
+        assert!(!v.enabled);
+        assert_eq!(v.stt_provider, "whisper_api");
+        assert_eq!(v.tts_provider, "macos_say");
+        assert_eq!(v.wake_word, "hey meepo");
+    }
+
+    #[test]
+    fn test_defaults_sandbox() {
+        let s = SandboxCliConfig::default();
+        assert!(!s.enabled);
+        assert_eq!(s.docker_socket, "/var/run/docker.sock");
+        assert_eq!(s.memory_mb, 256);
+        assert_eq!(s.timeout_secs, 30);
+    }
+
+    #[test]
+    fn test_defaults_secrets() {
+        let s = SecretsCliConfig::default();
+        assert_eq!(s.provider, "env");
+        assert!(s.secrets_dir.is_none());
+    }
+
+    #[test]
+    fn test_defaults_guardrails() {
+        let g = GuardrailsCliConfig::default();
+        assert!(g.enabled);
+        assert_eq!(g.block_severity, "high");
+        assert_eq!(g.max_input_length, 100_000);
+    }
+
+    #[test]
+    fn test_defaults_usage() {
+        let u = UsageCliConfig::default();
+        assert!(u.enabled);
+        assert!(u.daily_budget_usd.is_none());
+        assert!(u.monthly_budget_usd.is_none());
+    }
+
+    #[test]
+    fn test_defaults_notifications() {
+        let n = NotificationsConfig::default();
+        assert!(!n.enabled);
+        assert_eq!(n.channel, "imessage");
+        assert!(n.on_task_start);
+        assert!(n.on_error);
+        assert!(n.quiet_hours.is_none());
+        let d = DigestConfig::default();
+        assert!(!d.enabled);
+        assert_eq!(d.morning_cron, "0 9 * * *");
+    }
+
+    #[test]
+    fn test_defaults_agent_to_agent() {
+        let a = AgentToAgentCliConfig::default();
+        assert!(!a.enabled);
+        assert_eq!(a.visibility, "tree");
+        assert_eq!(a.max_ping_pong_turns, 5);
+    }
+
+    #[test]
+    fn test_defaults_reminders() {
+        let r = RemindersConfig::default();
+        assert!(!r.enabled);
+        assert_eq!(r.list_name, "Meepo");
+    }
+
+    #[test]
+    fn test_defaults_notes() {
+        let n = NotesConfig::default();
+        assert!(!n.enabled);
+        assert_eq!(n.folder_name, "Meepo");
+    }
+
+    #[test]
+    fn test_defaults_contacts() {
+        let c = ContactsConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.group_name, "Meepo");
+    }
+
+    #[test]
+    fn test_defaults_email() {
+        let e = EmailConfig::default();
+        assert!(!e.enabled);
+        assert_eq!(e.subject_prefix, "[meepo]");
+    }
+
+    #[test]
+    fn test_defaults_alexa() {
+        let a = AlexaConfig::default();
+        assert!(!a.enabled);
+        assert_eq!(a.poll_interval_secs, 3);
+    }
+
+    // ── Custom Debug impls (secrets masked) ─────────────────────
+
+    #[test]
+    fn test_debug_anthropic_config_masks_key() {
+        let c = AnthropicConfig {
+            api_key: "sk-ant-api03-xxxxxxxxxxxx-yyyy".to_string(),
+            base_url: default_base_url(),
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("sk-ant-api03-xxxxxxxxxxxx-yyyy"));
+        assert!(dbg.contains("..."));
+    }
+
+    #[test]
+    fn test_debug_openai_config_masks_key() {
+        let c = OpenAiProviderConfig {
+            api_key: "sk-proj-xxxxxxxxxxxx-yyyy".to_string(),
+            base_url: default_openai_base_url(),
+            model: default_openai_model(),
+            max_tokens: default_openai_max_tokens(),
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("sk-proj-xxxxxxxxxxxx-yyyy"));
+    }
+
+    #[test]
+    fn test_debug_google_config_masks_key() {
+        let c = GoogleProviderConfig {
+            api_key: "AIzaSyxxxxxxxxxxxxxxxxx".to_string(),
+            model: default_google_model(),
+            max_tokens: default_google_max_tokens(),
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("AIzaSyxxxxxxxxxxxxxxxxx"));
+    }
+
+    #[test]
+    fn test_debug_tavily_config_masks_key() {
+        let c = TavilyConfig {
+            api_key: "tvly-xxxxxxxxxxxx-yyyy".to_string(),
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("tvly-xxxxxxxxxxxx-yyyy"));
+    }
+
+    #[test]
+    fn test_debug_discord_config_masks_token() {
+        let c = DiscordConfig {
+            enabled: true,
+            token: "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.XXXXXX.YYYYYY".to_string(),
+            allowed_users: vec![],
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("MTIzNDU2Nzg5MDEyMzQ1Njc4OQ"));
+    }
+
+    #[test]
+    fn test_debug_slack_config_masks_token() {
+        let c = SlackConfig {
+            enabled: true,
+            bot_token: "xoxb-1234567890-abcdefghij".to_string(),
+            poll_interval_secs: 3,
+            allowed_users: vec![],
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("xoxb-1234567890-abcdefghij"));
+    }
+
+    #[test]
+    fn test_debug_a2a_config_masks_token() {
+        let c = A2aConfig {
+            enabled: true,
+            port: 8081,
+            auth_token: "super-secret-token-12345".to_string(),
+            allowed_tools: vec![],
+            agents: vec![],
+        };
+        let dbg = format!("{:?}", c);
+        assert!(!dbg.contains("super-secret-token-12345"));
+    }
+
+    #[test]
+    fn test_debug_gateway_config_masks_token() {
+        let g = GatewayConfig {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            port: 18789,
+            auth_token: "gw-secret-token-abcdef".to_string(),
+        };
+        let dbg = format!("{:?}", g);
+        assert!(!dbg.contains("gw-secret-token-abcdef"));
+    }
+
+    #[test]
+    fn test_debug_voice_config_masks_key() {
+        let v = VoiceConfig {
+            enabled: true,
+            stt_provider: "whisper_api".to_string(),
+            tts_provider: "elevenlabs".to_string(),
+            elevenlabs_api_key: "el-secret-key-12345678".to_string(),
+            elevenlabs_voice_id: "default".to_string(),
+            wake_word: "hey meepo".to_string(),
+            wake_enabled: false,
+        };
+        let dbg = format!("{:?}", v);
+        assert!(!dbg.contains("el-secret-key-12345678"));
+    }
+
+    // ── MeepoConfig::load ───────────────────────────────────────
+
+    #[test]
+    fn test_load_missing_file() {
+        let path = Some(PathBuf::from("/nonexistent/path/config.toml"));
+        let result = MeepoConfig::load(&path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Failed to read config"));
+    }
+
+    #[test]
+    fn test_load_invalid_toml() {
+        let dir = std::env::temp_dir().join("meepo_test_invalid_toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad.toml");
+        std::fs::write(&path, "this is not valid toml {{{{").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let result = MeepoConfig::load(&Some(path.clone()));
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_permissions_check() {
+        let dir = std::env::temp_dir().join("meepo_test_perms");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("permissive.toml");
+        std::fs::write(&path, "[agent]\ndefault_model = \"test\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let result = MeepoConfig::load(&Some(path.clone()));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("permissive permissions"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── ALLOWED_ENV_VARS ────────────────────────────────────────
+
+    #[test]
+    fn test_allowed_env_vars_contains_expected() {
+        assert!(ALLOWED_ENV_VARS.contains(&"ANTHROPIC_API_KEY"));
+        assert!(ALLOWED_ENV_VARS.contains(&"OPENAI_API_KEY"));
+        assert!(ALLOWED_ENV_VARS.contains(&"HOME"));
+        assert!(!ALLOWED_ENV_VARS.contains(&"PATH"));
+    }
+}

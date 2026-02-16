@@ -540,3 +540,21 @@ enabled = false
 bind = "127.0.0.1"                      # Use 0.0.0.0 for remote access
 port = 18789
 auth_token = "${MEEPO_GATEWAY_TOKEN}"
+
+# ── Voice / Talk Mode ─────────────────────────────────────────────
+# Speech-to-text (STT) and text-to-speech (TTS) for hands-free interaction.
+# Use `meepo talk` to enter continuous voice conversation mode.
+#
+# STT providers: whisper_api (OpenAI Whisper), whisper_local (local whisper.cpp)
+# TTS providers: macos_say (macOS built-in), elevenlabs, openai_tts
+#
+# export ELEVENLABS_API_KEY="your-elevenlabs-key"
+
+[voice]
+enabled = false
+stt_provider = "whisper_api"            # whisper_api | whisper_local
+tts_provider = "macos_say"             # macos_say | elevenlabs | openai_tts
+elevenlabs_api_key = "${ELEVENLABS_API_KEY}"
+elevenlabs_voice_id = "default"
+wake_word = "hey meepo"
+wake_enabled = false

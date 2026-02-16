@@ -32,6 +32,8 @@ pub struct MeepoConfig {
     pub usage: UsageCliConfig,
     #[serde(default)]
     pub gateway: GatewayConfig,
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -790,6 +792,66 @@ impl Default for GatewayConfig {
             bind: default_gateway_bind(),
             port: default_gateway_port(),
             auth_token: String::new(),
+        }
+    }
+}
+
+// ── Voice / Audio Config ────────────────────────────────────────
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_stt_provider")]
+    pub stt_provider: String,
+    #[serde(default = "default_tts_provider")]
+    pub tts_provider: String,
+    #[serde(default)]
+    pub elevenlabs_api_key: String,
+    #[serde(default = "default_elevenlabs_voice_id")]
+    pub elevenlabs_voice_id: String,
+    #[serde(default)]
+    pub wake_word: String,
+    #[serde(default)]
+    pub wake_enabled: bool,
+}
+
+impl std::fmt::Debug for VoiceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceConfig")
+            .field("enabled", &self.enabled)
+            .field("stt_provider", &self.stt_provider)
+            .field("tts_provider", &self.tts_provider)
+            .field("elevenlabs_api_key", &mask_secret(&self.elevenlabs_api_key))
+            .field("elevenlabs_voice_id", &self.elevenlabs_voice_id)
+            .field("wake_word", &self.wake_word)
+            .field("wake_enabled", &self.wake_enabled)
+            .finish()
+    }
+}
+
+fn default_stt_provider() -> String {
+    "whisper_api".to_string()
+}
+
+fn default_tts_provider() -> String {
+    "macos_say".to_string()
+}
+
+fn default_elevenlabs_voice_id() -> String {
+    "default".to_string()
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stt_provider: default_stt_provider(),
+            tts_provider: default_tts_provider(),
+            elevenlabs_api_key: String::new(),
+            elevenlabs_voice_id: default_elevenlabs_voice_id(),
+            wake_word: "hey meepo".to_string(),
+            wake_enabled: false,
         }
     }
 }

@@ -9,6 +9,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod audio;
 pub mod autonomy;
 pub mod context;
 pub mod corrective_rag;

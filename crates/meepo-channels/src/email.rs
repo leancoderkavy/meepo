@@ -157,7 +157,10 @@ end tell
         {
             Ok(result) => result.map_err(|e| anyhow!("Failed to run osascript: {}", e))?,
             Err(_) => {
-                warn!("Mail.app poll timed out after {}s, retrying once...", MAIL_POLL_TIMEOUT_SECS);
+                warn!(
+                    "Mail.app poll timed out after {}s, retrying once...",
+                    MAIL_POLL_TIMEOUT_SECS
+                );
                 tokio::time::sleep(Duration::from_secs(4)).await;
                 tokio::time::timeout(
                     Duration::from_secs(MAIL_POLL_TIMEOUT_SECS),

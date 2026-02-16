@@ -12,6 +12,7 @@ use crate::api::ToolDefinition;
 pub mod accessibility;
 pub mod autonomous;
 pub mod browser;
+pub mod canvas;
 pub mod code;
 pub mod delegate;
 pub mod filesystem;

@@ -1393,6 +1393,11 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(
         meepo_core::tools::lifestyle::social::SuggestFollowupsTool::new(db.clone()),
     ));
+    // ── Canvas / A2UI Tools ─────────────────────────────────────
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasPushTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasResetTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasEvalTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasSnapshotTool::new()));
     info!("Registered {} tools (including lifestyle integrations)", registry.len());
 
     // Initialize progress channel for sub-agent orchestrator
@@ -2948,6 +2953,11 @@ async fn cmd_mcp_server(config_path: &Option<PathBuf>) -> Result<()> {
     registry.register(Arc::new(
         meepo_core::tools::lifestyle::social::SuggestFollowupsTool::new(db.clone()),
     ));
+    // ── Canvas / A2UI Tools (MCP mode) ──────────────────────────────
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasPushTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasResetTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasEvalTool::new()));
+    registry.register(Arc::new(meepo_core::tools::canvas::CanvasSnapshotTool::new()));
 
     // ── Usage Tracker (MCP mode) ────────────────────────────────────
     if cfg.usage.enabled {

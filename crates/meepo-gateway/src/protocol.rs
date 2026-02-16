@@ -59,6 +59,10 @@ pub mod events {
     pub const TOOL_EXECUTING: &str = "tool.executing";
     pub const STATUS_UPDATE: &str = "status.update";
     pub const SESSION_CREATED: &str = "session.created";
+    pub const CANVAS_PUSH: &str = "canvas.push";
+    pub const CANVAS_RESET: &str = "canvas.reset";
+    pub const CANVAS_EVAL: &str = "canvas.eval";
+    pub const CANVAS_SNAPSHOT: &str = "canvas.snapshot";
 }
 
 // ── Error codes ──

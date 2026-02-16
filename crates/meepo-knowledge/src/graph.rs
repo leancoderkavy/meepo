@@ -640,4 +640,51 @@ mod tests {
         let debug = format!("{:?}", ctx);
         assert!(debug.contains("Test"));
     }
+
+    #[tokio::test]
+    async fn test_get_context_for() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let graph = KnowledgeGraph::new(temp.path().join("t.db"), temp.path().join("idx"))?;
+
+        let id = graph.add_entity("Alice", "person", None).await?;
+        let ctx = graph.get_context_for(&id).await?;
+        assert_eq!(ctx.entity.name, "Alice");
+        assert!(ctx.related_entities.is_empty());
+        assert!(ctx.relationships.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_and_delete_watcher() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let graph = KnowledgeGraph::new(temp.path().join("t.db"), temp.path().join("idx"))?;
+
+        let id = graph
+            .create_watcher("email", serde_json::json!({}), "alert", "slack")
+            .await?;
+
+        let watchers = graph.get_active_watchers().await?;
+        assert_eq!(watchers.len(), 1);
+
+        graph.update_watcher(&id, false).await?;
+        let watchers = graph.get_active_watchers().await?;
+        assert!(watchers.is_empty());
+
+        graph.delete_watcher(&id).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_full_text() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let graph = KnowledgeGraph::new(temp.path().join("t.db"), temp.path().join("idx"))?;
+
+        graph.add_entity("Rust Programming", "language", None).await?;
+        graph.add_entity("Python Programming", "language", None).await?;
+
+        let results = graph.search("Rust", 10)?;
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|r| r.content.contains("Rust")));
+        Ok(())
+    }
 }

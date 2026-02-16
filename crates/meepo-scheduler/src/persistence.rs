@@ -643,4 +643,111 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, "file_changed");
     }
+
+    #[test]
+    fn test_deactivate_nonexistent() {
+        let conn = setup_test_db();
+        let result = deactivate_watcher(&conn, "nonexistent").unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_delete_nonexistent() {
+        let conn = setup_test_db();
+        let result = delete_watcher(&conn, "nonexistent").unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_cleanup_old_events_empty() {
+        let conn = setup_test_db();
+        let deleted = cleanup_old_events(&conn, 30).unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_get_watcher_events_limit() {
+        let conn = setup_test_db();
+        let watcher = Watcher::new(
+            WatcherKind::FileWatch {
+                path: "/tmp".to_string(),
+            },
+            "Test".to_string(),
+            "test".to_string(),
+        );
+        save_watcher(&conn, &watcher).unwrap();
+
+        for i in 0..5 {
+            save_watcher_event(
+                &conn,
+                &watcher.id,
+                "file_changed",
+                &serde_json::json!({"idx": i}),
+            )
+            .unwrap();
+        }
+
+        let events = get_watcher_events(&conn, &watcher.id, 3).unwrap();
+        assert_eq!(events.len(), 3);
+
+        let all = get_watcher_events(&conn, &watcher.id, 100).unwrap();
+        assert_eq!(all.len(), 5);
+    }
+
+    #[test]
+    fn test_get_last_run_nonexistent() {
+        let conn = setup_test_db();
+        let last = get_last_run(&conn, "nonexistent").unwrap();
+        assert!(last.is_none());
+    }
+
+    #[test]
+    fn test_init_tables_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_watcher_tables(&conn).unwrap();
+        init_watcher_tables(&conn).unwrap(); // should not error
+    }
+
+    #[test]
+    fn test_save_watcher_all_kinds() {
+        let conn = setup_test_db();
+
+        let kinds = vec![
+            WatcherKind::EmailWatch {
+                from: Some("a@b.com".to_string()),
+                subject_contains: Some("urgent".to_string()),
+                interval_secs: 60,
+            },
+            WatcherKind::CalendarWatch {
+                lookahead_hours: 12,
+                interval_secs: 300,
+            },
+            WatcherKind::GitHubWatch {
+                repo: "user/repo".to_string(),
+                events: vec!["push".to_string()],
+                github_token: None,
+                interval_secs: 120,
+            },
+            WatcherKind::FileWatch {
+                path: "/tmp/watch".to_string(),
+            },
+            WatcherKind::MessageWatch {
+                keyword: "deploy".to_string(),
+            },
+            WatcherKind::Scheduled {
+                cron_expr: "0 * * * *".to_string(),
+                task: "hourly check".to_string(),
+            },
+        ];
+
+        for (i, kind) in kinds.into_iter().enumerate() {
+            let watcher = Watcher::new(kind, format!("Action {}", i), "ch".to_string());
+            save_watcher(&conn, &watcher).unwrap();
+            let loaded = get_watcher_by_id(&conn, &watcher.id).unwrap().unwrap();
+            assert_eq!(loaded.action, format!("Action {}", i));
+        }
+
+        let active = get_active_watchers(&conn).unwrap();
+        assert_eq!(active.len(), 6);
+    }
 }

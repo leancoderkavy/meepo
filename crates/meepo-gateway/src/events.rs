@@ -83,4 +83,13 @@ mod tests {
         drop(_rx1);
         assert_eq!(bus.subscriber_count(), 1);
     }
+
+    #[test]
+    fn test_event_bus_clone() {
+        let bus = EventBus::new(8);
+        let bus2 = bus.clone();
+        let _rx = bus.subscribe();
+        // Cloned bus shares the same channel
+        assert_eq!(bus2.subscriber_count(), 1);
+    }
 }

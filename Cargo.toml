@@ -7,6 +7,7 @@ members = [
     "crates/meepo-scheduler",
     "crates/meepo-mcp",
     "crates/meepo-a2a",
+    "crates/meepo-gateway",
     "crates/meepo-cli",
 ]
 

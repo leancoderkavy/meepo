@@ -16,6 +16,7 @@ pub mod middleware;
 pub mod notifications;
 pub mod orchestrator;
 pub mod platform;
+pub mod providers;
 pub mod query_router;
 pub mod skills;
 pub mod summarization;
@@ -37,6 +38,7 @@ pub use orchestrator::{
     ExecutionMode, FilteredToolExecutor, OrchestratorConfig, SubTask, SubTaskResult, SubTaskStatus,
     TaskGroup, TaskOrchestrator,
 };
+pub use providers::{ChatMessage, ChatResponse, LlmProvider, ModelRouter};
 pub use query_router::{QueryComplexity, QueryRouterConfig, RetrievalStrategy};
 pub use summarization::SummarizationConfig;
 pub use tool_selector::ToolSelectorConfig;

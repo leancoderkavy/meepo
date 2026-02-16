@@ -958,26 +958,94 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
         memory.len()
     );
 
-    // Initialize API client
-    let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
-    if api_key.is_empty() || api_key.contains("${") {
-        anyhow::bail!(
-            "ANTHROPIC_API_KEY is not set.\n\n\
-             Fix it with:\n  \
-             export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
-             Or run the setup wizard:\n  \
-             meepo setup\n\n\
-             Get a key at: https://console.anthropic.com/settings/keys"
-        );
-    }
-    let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
-    let api = meepo_core::api::ApiClient::new(api_key, Some(cfg.agent.default_model.clone()))
-        .with_max_tokens(cfg.agent.max_tokens)
-        .with_base_url(base_url);
-    info!(
-        "Anthropic API client initialized (model: {})",
-        cfg.agent.default_model
-    );
+    // Initialize API client via ModelRouter (multi-provider with failover)
+    let api = {
+        use meepo_core::providers::anthropic::AnthropicProvider;
+        use meepo_core::providers::router::ModelRouter;
+
+        let mut providers: Vec<Box<dyn meepo_core::providers::types::LlmProvider>> = Vec::new();
+
+        // Primary: Anthropic (required)
+        let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
+        if api_key.is_empty() || api_key.contains("${") {
+            anyhow::bail!(
+                "ANTHROPIC_API_KEY is not set.\n\n\
+                 Fix it with:\n  \
+                 export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
+                 Or run the setup wizard:\n  \
+                 meepo setup\n\n\
+                 Get a key at: https://console.anthropic.com/settings/keys"
+            );
+        }
+        let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
+        providers.push(Box::new(AnthropicProvider::new(
+            api_key,
+            cfg.agent.default_model.clone(),
+            base_url,
+            cfg.agent.max_tokens,
+        )));
+        info!("Provider: anthropic/{}", cfg.agent.default_model);
+
+        // Optional: OpenAI
+        if let Some(openai_cfg) = &cfg.providers.openai {
+            let key = shellexpand_str(&openai_cfg.api_key);
+            if !key.is_empty() && !key.contains("${") {
+                use meepo_core::providers::openai::OpenAiProvider;
+                let url = shellexpand_str(&openai_cfg.base_url);
+                providers.push(Box::new(OpenAiProvider::new(
+                    key,
+                    openai_cfg.model.clone(),
+                    url,
+                    openai_cfg.max_tokens,
+                )));
+                info!("Provider: openai/{}", openai_cfg.model);
+            }
+        }
+
+        // Optional: Google Gemini
+        if let Some(google_cfg) = &cfg.providers.google {
+            let key = shellexpand_str(&google_cfg.api_key);
+            if !key.is_empty() && !key.contains("${") {
+                use meepo_core::providers::google::GoogleProvider;
+                providers.push(Box::new(GoogleProvider::new(
+                    key,
+                    google_cfg.model.clone(),
+                    google_cfg.max_tokens,
+                )));
+                info!("Provider: google/{}", google_cfg.model);
+            }
+        }
+
+        // Optional: OpenAI-compatible
+        if let Some(compat_cfg) = &cfg.providers.openai_compat {
+            use meepo_core::providers::openai_compat::OpenAiCompatProvider;
+            let key = shellexpand_str(&compat_cfg.api_key);
+            let url = shellexpand_str(&compat_cfg.base_url);
+            let name = if compat_cfg.name.is_empty() {
+                "openai_compat".to_string()
+            } else {
+                compat_cfg.name.clone()
+            };
+            providers.push(Box::new(OpenAiCompatProvider::new(
+                name.clone(),
+                key,
+                compat_cfg.model.clone(),
+                url,
+                compat_cfg.max_tokens,
+            )));
+            info!("Provider: {}/{}", name, compat_cfg.model);
+        }
+
+        let router = if providers.len() == 1 {
+            ModelRouter::single(providers.remove(0))
+        } else {
+            info!("ModelRouter: {} providers with failover", providers.len());
+            ModelRouter::with_failover(providers)?
+        };
+
+        meepo_core::api::ApiClient::from_router(router)
+    };
+    info!("API client initialized (model: {})", api.model());
 
     // Initialize Tavily client (optional — web search works only if API key is set)
     let tavily_client = cfg
@@ -2273,6 +2341,29 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
             }
         });
         info!("A2A server started on port {}", cfg.a2a.port);
+    }
+
+    // Start Gateway (WebSocket control plane) if enabled
+    if cfg.gateway.enabled {
+        let bind_addr: std::net::SocketAddr = format!(
+            "{}:{}",
+            cfg.gateway.bind, cfg.gateway.port
+        )
+        .parse()
+        .context("Invalid gateway bind address")?;
+
+        let gateway_token = shellexpand_str(&cfg.gateway.auth_token);
+        let gateway = meepo_gateway::GatewayServer::new(bind_addr, gateway_token);
+
+        tokio::spawn(async move {
+            if let Err(e) = gateway.run().await {
+                error!("Gateway server error: {}", e);
+            }
+        });
+        info!(
+            "Gateway started on ws://{}:{}/ws",
+            cfg.gateway.bind, cfg.gateway.port
+        );
     }
 
     // Wait for shutdown signal

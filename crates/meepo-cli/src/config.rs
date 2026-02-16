@@ -30,6 +30,8 @@ pub struct MeepoConfig {
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub usage: UsageCliConfig,
+    #[serde(default)]
+    pub gateway: GatewayConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +56,15 @@ fn default_memory_file() -> String {
 pub struct ProvidersConfig {
     pub anthropic: AnthropicConfig,
     #[serde(default)]
+    pub openai: Option<OpenAiProviderConfig>,
+    #[serde(default)]
+    pub google: Option<GoogleProviderConfig>,
+    #[serde(default)]
+    pub openai_compat: Option<OpenAiCompatProviderConfig>,
+    #[serde(default)]
     pub tavily: Option<TavilyConfig>,
+    #[serde(default)]
+    pub failover_order: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -75,6 +85,94 @@ impl std::fmt::Debug for AnthropicConfig {
 
 fn default_base_url() -> String {
     "https://api.anthropic.com".to_string()
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OpenAiProviderConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_openai_model")]
+    pub model: String,
+    #[serde(default = "default_openai_max_tokens")]
+    pub max_tokens: u32,
+}
+
+impl std::fmt::Debug for OpenAiProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiProviderConfig")
+            .field("api_key", &mask_secret(&self.api_key))
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com".to_string()
+}
+fn default_openai_model() -> String {
+    "gpt-4o".to_string()
+}
+fn default_openai_max_tokens() -> u32 {
+    4096
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GoogleProviderConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_google_model")]
+    pub model: String,
+    #[serde(default = "default_google_max_tokens")]
+    pub max_tokens: u32,
+}
+
+impl std::fmt::Debug for GoogleProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoogleProviderConfig")
+            .field("api_key", &mask_secret(&self.api_key))
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
+}
+
+fn default_google_model() -> String {
+    "gemini-2.0-flash".to_string()
+}
+fn default_google_max_tokens() -> u32 {
+    4096
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OpenAiCompatProviderConfig {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default = "default_compat_max_tokens")]
+    pub max_tokens: u32,
+}
+
+impl std::fmt::Debug for OpenAiCompatProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiCompatProviderConfig")
+            .field("name", &self.name)
+            .field("api_key", &mask_secret(&self.api_key))
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
+}
+
+fn default_compat_max_tokens() -> u32 {
+    4096
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -652,6 +750,50 @@ impl Default for BrowserConfig {
     }
 }
 
+// ── Gateway Config ──────────────────────────────────────────────
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_gateway_bind")]
+    pub bind: String,
+    #[serde(default = "default_gateway_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub auth_token: String,
+}
+
+impl std::fmt::Debug for GatewayConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewayConfig")
+            .field("enabled", &self.enabled)
+            .field("bind", &self.bind)
+            .field("port", &self.port)
+            .field("auth_token", &mask_secret(&self.auth_token))
+            .finish()
+    }
+}
+
+fn default_gateway_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_gateway_port() -> u16 {
+    18789
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_gateway_bind(),
+            port: default_gateway_port(),
+            auth_token: String::new(),
+        }
+    }
+}
+
 // ── Usage & Cost Tracking Config ────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -879,12 +1021,17 @@ impl MeepoConfig {
 /// This prevents an attacker who can modify the config from reading arbitrary env vars.
 const ALLOWED_ENV_VARS: &[&str] = &[
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GOOGLE_AI_API_KEY",
+    "CUSTOM_LLM_API_KEY",
     "TAVILY_API_KEY",
     "DISCORD_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
     "A2A_AUTH_TOKEN",
     "OPENCLAW_A2A_TOKEN",
     "GITHUB_TOKEN",
+    "MEEPO_GATEWAY_TOKEN",
+    "ELEVENLABS_API_KEY",
     "HOME",
     "USER",
 ];

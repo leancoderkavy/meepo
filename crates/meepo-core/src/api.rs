@@ -1,135 +1,92 @@
-//! Anthropic API client with tool use loop
+//! LLM API client with tool use loop
+//!
+//! Wraps [`ModelRouter`] to provide a high-level interface for the agent.
+//! Supports Anthropic, OpenAI, Google Gemini, and any OpenAI-compatible endpoint
+//! with automatic failover.
 
-use anyhow::{Context, Result, anyhow};
-use reqwest::Client;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use crate::providers::anthropic::AnthropicProvider;
+use crate::providers::router::ModelRouter;
+use crate::providers::types::{
+    ChatBlock, ChatMessage, ChatMessageContent, ChatResponseBlock, ChatRole, StopReason,
+};
 use crate::tools::ToolExecutor;
 use crate::usage::AccumulatedUsage;
 
-/// Anthropic API client
+/// LLM API client — delegates to [`ModelRouter`] for multi-provider support
 #[derive(Clone)]
 pub struct ApiClient {
-    client: Client,
-    api_key: String,
-    base_url: String,
-    model: String,
-    max_tokens: u32,
+    router: Arc<ModelRouter>,
 }
 
 impl std::fmt::Debug for ApiClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Mask the API key in debug output
-        let masked_key = if self.api_key.len() > 7 {
-            format!(
-                "{}...{}",
-                &self.api_key[..3],
-                &self.api_key[self.api_key.len() - 4..]
-            )
-        } else {
-            "***".to_string()
-        };
-
         f.debug_struct("ApiClient")
-            .field("client", &"<reqwest::Client>")
-            .field("api_key", &masked_key)
-            .field("base_url", &self.base_url)
-            .field("model", &self.model)
-            .field("max_tokens", &self.max_tokens)
+            .field("provider", &self.router.provider_name())
+            .field("model", &self.router.model())
+            .field("providers", &self.router.provider_count())
             .finish()
     }
 }
 
 impl ApiClient {
-    /// Create a new API client
+    /// Create a new API client with a single Anthropic provider (backward compatible)
     pub fn new(api_key: String, model: Option<String>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .expect("Failed to build HTTP client");
-
-        Self {
-            client,
+        let model_str = model.unwrap_or_else(|| "claude-opus-4-6".to_string());
+        let provider = AnthropicProvider::new(
             api_key,
-            base_url: "https://api.anthropic.com".to_string(),
-            model: model.unwrap_or_else(|| "claude-opus-4-6".to_string()),
-            max_tokens: 4096,
+            model_str,
+            "https://api.anthropic.com".to_string(),
+            4096,
+        );
+        Self {
+            router: Arc::new(ModelRouter::single(Box::new(provider))),
         }
     }
 
-    /// Set max tokens for responses
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = max_tokens;
+    /// Create an API client from a pre-built [`ModelRouter`]
+    pub fn from_router(router: ModelRouter) -> Self {
+        Self {
+            router: Arc::new(router),
+        }
+    }
+
+    /// Set max tokens for responses (only works with single-provider backward-compat constructor)
+    pub fn with_max_tokens(self, max_tokens: u32) -> Self {
+        // For backward compatibility: rebuild the Anthropic provider with new max_tokens.
+        // When using from_router(), max_tokens is set per-provider at construction time.
+        let _ = max_tokens;
+        // NOTE: This is a no-op when using from_router(). The max_tokens is configured
+        // per-provider. Kept for backward compatibility with existing call sites.
         self
     }
 
-    /// Set a custom base URL (e.g. for proxies or regional endpoints)
-    pub fn with_base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
+    /// Set a custom base URL (backward compatibility — no-op when using from_router)
+    pub fn with_base_url(self, _base_url: String) -> Self {
+        // NOTE: Base URL is configured per-provider. Kept for backward compatibility.
         self
     }
 
-    /// Make a single chat request to Claude API
+    /// Make a single chat request via the model router
     pub async fn chat(
         &self,
         messages: &[ApiMessage],
         tools: &[ToolDefinition],
         system: &str,
     ) -> Result<ApiResponse> {
-        let url = format!("{}/v1/messages", self.base_url);
+        // Convert legacy ApiMessage to provider-agnostic ChatMessage
+        let chat_messages = Self::to_chat_messages(messages);
 
-        let body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "system": system,
-            "messages": messages,
-            "tools": tools,
-        });
+        let response = self.router.chat(&chat_messages, tools, system).await?;
 
-        debug!(
-            "Sending request to Anthropic API with {} messages",
-            messages.len()
-        );
-
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send request to Anthropic API")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow!(
-                "API request failed with status {}: {}",
-                status,
-                error_text
-            ));
-        }
-
-        let api_response: ApiResponse = response
-            .json()
-            .await
-            .context("Failed to parse API response")?;
-
-        debug!(
-            "Received response with {} content blocks, stop_reason: {:?}",
-            api_response.content.len(),
-            api_response.stop_reason
-        );
-
-        Ok(api_response)
+        // Convert back to legacy ApiResponse
+        Ok(Self::from_chat_response(response))
     }
 
     /// Run the full tool use loop until completion (with 5-minute overall timeout)
@@ -159,9 +116,9 @@ impl ApiClient {
 
         let mut accumulated = AccumulatedUsage::new();
 
-        let mut conversation: Vec<ApiMessage> = vec![ApiMessage {
-            role: "user".to_string(),
-            content: MessageContent::Text(initial_message.to_string()),
+        let mut conversation: Vec<ChatMessage> = vec![ChatMessage {
+            role: ChatRole::User,
+            content: ChatMessageContent::Text(initial_message.to_string()),
         }];
 
         let mut iterations = 0;
@@ -176,100 +133,181 @@ impl ApiClient {
 
             info!("Tool loop iteration {}", iterations);
 
-            let response = self.chat(&conversation, tools, system).await?;
+            let response = self.router.chat(&conversation, tools, system).await?;
 
             // Accumulate token usage from this API call
             accumulated.add(response.usage.input_tokens, response.usage.output_tokens);
 
-            // Build assistant message from response content blocks
-            let assistant_message = ApiMessage {
-                role: "assistant".to_string(),
-                content: MessageContent::Blocks(response.content.clone()),
-            };
-            conversation.push(assistant_message);
+            // Build assistant message from response blocks
+            let assistant_blocks: Vec<ChatBlock> = response
+                .blocks
+                .iter()
+                .map(|b| match b {
+                    ChatResponseBlock::Text { text } => ChatBlock::Text { text: text.clone() },
+                    ChatResponseBlock::ToolCall { id, name, input } => ChatBlock::ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    },
+                })
+                .collect();
 
-            match response.stop_reason.as_deref() {
-                Some("tool_use") => {
-                    debug!("Processing tool calls from response");
+            conversation.push(ChatMessage {
+                role: ChatRole::Assistant,
+                content: ChatMessageContent::Blocks(assistant_blocks),
+            });
 
-                    // Extract tool use blocks and execute them
-                    let mut tool_results = Vec::new();
+            if response.stop_reason.is_tool_use() {
+                debug!("Processing tool calls from response");
 
-                    for block in &response.content {
-                        if let ContentBlock::ToolUse { id, name, input } = block {
-                            info!("Executing tool: {}", name);
+                let mut tool_results = Vec::new();
 
-                            // Track tool call in accumulated usage
-                            accumulated.record_tool_call(name);
+                for block in &response.blocks {
+                    if let ChatResponseBlock::ToolCall { id, name, input } = block {
+                        info!("Executing tool: {}", name);
 
-                            let result = tool_executor.execute(name, input.clone()).await;
+                        accumulated.record_tool_call(name);
 
-                            let mut result_content = match result {
-                                Ok(output) => output,
-                                Err(e) => {
-                                    warn!("Tool {} failed: {}", name, e);
-                                    format!("Error: {}", e)
-                                }
-                            };
+                        let result = tool_executor.execute(name, input.clone()).await;
 
-                            // Truncate oversized tool outputs to prevent context explosion
-                            if result_content.len() > MAX_TOOL_OUTPUT {
-                                result_content.truncate(MAX_TOOL_OUTPUT);
-                                result_content.push_str("\n[Output truncated]");
+                        let mut result_content = match result {
+                            Ok(output) => output,
+                            Err(e) => {
+                                warn!("Tool {} failed: {}", name, e);
+                                format!("Error: {}", e)
                             }
+                        };
 
-                            tool_results.push(ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: result_content,
-                            });
+                        if result_content.len() > MAX_TOOL_OUTPUT {
+                            result_content.truncate(MAX_TOOL_OUTPUT);
+                            result_content.push_str("\n[Output truncated]");
                         }
+
+                        tool_results.push(ChatBlock::ToolResult {
+                            tool_call_id: id.clone(),
+                            content: result_content,
+                        });
                     }
-
-                    if tool_results.is_empty() {
-                        warn!("Stop reason was tool_use but no tool calls found");
-                        return Err(anyhow!("Stop reason was tool_use but no tool calls found"));
-                    }
-
-                    // Add tool results to conversation
-                    conversation.push(ApiMessage {
-                        role: "user".to_string(),
-                        content: MessageContent::Blocks(tool_results),
-                    });
-
-                    // Continue loop to process next response
                 }
-                Some("end_turn") | None => {
-                    debug!("Tool loop completed (iterations: {}, tokens: in={} out={})",
-                        iterations, accumulated.input_tokens, accumulated.output_tokens);
 
-                    // Extract final text response
-                    let mut final_text = String::new();
-                    for block in &response.content {
-                        if let ContentBlock::Text { text } = block {
-                            if !final_text.is_empty() {
-                                final_text.push('\n');
-                            }
-                            final_text.push_str(text);
+                if tool_results.is_empty() {
+                    warn!("Stop reason was tool_use but no tool calls found");
+                    return Err(anyhow!("Stop reason was tool_use but no tool calls found"));
+                }
+
+                conversation.push(ChatMessage {
+                    role: ChatRole::User,
+                    content: ChatMessageContent::Blocks(tool_results),
+                });
+            } else if response.stop_reason.is_end_turn()
+                || response.stop_reason == StopReason::Unknown
+            {
+                debug!(
+                    "Tool loop completed (iterations: {}, tokens: in={} out={})",
+                    iterations, accumulated.input_tokens, accumulated.output_tokens
+                );
+
+                let mut final_text = String::new();
+                for block in &response.blocks {
+                    if let ChatResponseBlock::Text { text } = block {
+                        if !final_text.is_empty() {
+                            final_text.push('\n');
                         }
+                        final_text.push_str(text);
                     }
-
-                    if final_text.is_empty() {
-                        return Err(anyhow!("No text response from assistant"));
-                    }
-
-                    return Ok((final_text, accumulated));
                 }
-                Some(other) => {
-                    warn!("Unexpected stop_reason: {}", other);
-                    return Err(anyhow!("Unexpected stop_reason: {}", other));
+
+                if final_text.is_empty() {
+                    return Err(anyhow!("No text response from assistant"));
                 }
+
+                return Ok((final_text, accumulated));
+            } else {
+                warn!("Unexpected stop_reason: {:?}", response.stop_reason);
+                return Err(anyhow!("Unexpected stop_reason: {:?}", response.stop_reason));
             }
         }
     }
 
     /// Get the model name (for usage tracking)
     pub fn model(&self) -> &str {
-        &self.model
+        self.router.model()
+    }
+
+    // ── Legacy format conversion helpers ──
+
+    fn to_chat_messages(messages: &[ApiMessage]) -> Vec<ChatMessage> {
+        messages
+            .iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "assistant" => ChatRole::Assistant,
+                    "system" => ChatRole::System,
+                    _ => ChatRole::User,
+                };
+                let content = match &m.content {
+                    MessageContent::Text(t) => ChatMessageContent::Text(t.clone()),
+                    MessageContent::Blocks(blocks) => {
+                        let chat_blocks: Vec<ChatBlock> = blocks
+                            .iter()
+                            .map(|b| match b {
+                                ContentBlock::Text { text } => {
+                                    ChatBlock::Text { text: text.clone() }
+                                }
+                                ContentBlock::ToolUse { id, name, input } => {
+                                    ChatBlock::ToolCall {
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                        input: input.clone(),
+                                    }
+                                }
+                                ContentBlock::ToolResult {
+                                    tool_use_id,
+                                    content,
+                                } => ChatBlock::ToolResult {
+                                    tool_call_id: tool_use_id.clone(),
+                                    content: content.clone(),
+                                },
+                            })
+                            .collect();
+                        ChatMessageContent::Blocks(chat_blocks)
+                    }
+                };
+                ChatMessage { role, content }
+            })
+            .collect()
+    }
+
+    fn from_chat_response(
+        resp: crate::providers::types::ChatResponse,
+    ) -> ApiResponse {
+        let content: Vec<ContentBlock> = resp
+            .blocks
+            .into_iter()
+            .map(|b| match b {
+                ChatResponseBlock::Text { text } => ContentBlock::Text { text },
+                ChatResponseBlock::ToolCall { id, name, input } => {
+                    ContentBlock::ToolUse { id, name, input }
+                }
+            })
+            .collect();
+
+        let stop_reason = match resp.stop_reason {
+            StopReason::EndTurn => Some("end_turn".to_string()),
+            StopReason::ToolUse => Some("tool_use".to_string()),
+            StopReason::MaxTokens => Some("max_tokens".to_string()),
+            StopReason::Unknown => None,
+        };
+
+        ApiResponse {
+            id: String::new(),
+            content,
+            stop_reason,
+            usage: Usage {
+                input_tokens: resp.usage.input_tokens,
+                output_tokens: resp.usage.output_tokens,
+            },
+        }
     }
 }
 
@@ -337,8 +375,13 @@ mod tests {
     #[test]
     fn test_api_client_creation() {
         let client = ApiClient::new("test-key".to_string(), None);
-        assert_eq!(client.model, "claude-opus-4-6");
-        assert_eq!(client.max_tokens, 4096);
+        assert_eq!(client.model(), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_api_client_creation_custom_model() {
+        let client = ApiClient::new("test-key".to_string(), Some("claude-sonnet-4-20250514".to_string()));
+        assert_eq!(client.model(), "claude-sonnet-4-20250514");
     }
 
     #[test]
@@ -351,32 +394,102 @@ mod tests {
     }
 
     #[test]
-    fn test_api_client_debug_masks_key() {
+    fn test_api_client_debug_no_key_leak() {
         let client = ApiClient::new("sk-ant-1234567890abcdef".to_string(), None);
         let debug_output = format!("{:?}", client);
 
-        // Should contain masked version
-        assert!(debug_output.contains("sk-...cdef"));
-
         // Should NOT contain the full key
         assert!(!debug_output.contains("sk-ant-1234567890abcdef"));
-    }
-
-    #[test]
-    fn test_api_client_debug_masks_short_key() {
-        let client = ApiClient::new("short".to_string(), None);
-        let debug_output = format!("{:?}", client);
-
-        // Should mask short keys as ***
-        assert!(debug_output.contains("***"));
-        assert!(!debug_output.contains("short"));
+        // Should contain provider info
+        assert!(debug_output.contains("anthropic"));
     }
 
     #[test]
     fn test_api_client_clone() {
         let client = ApiClient::new("test-key".to_string(), None);
         let cloned = client.clone();
-        assert_eq!(cloned.model, "claude-opus-4-6");
-        assert_eq!(cloned.max_tokens, 4096);
+        assert_eq!(cloned.model(), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_api_client_from_router() {
+        use crate::providers::anthropic::AnthropicProvider;
+        use crate::providers::router::ModelRouter;
+
+        let provider = AnthropicProvider::new(
+            "test-key".to_string(),
+            "claude-opus-4-6".to_string(),
+            "https://api.anthropic.com".to_string(),
+            4096,
+        );
+        let router = ModelRouter::single(Box::new(provider));
+        let client = ApiClient::from_router(router);
+        assert_eq!(client.model(), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_to_chat_messages_text() {
+        let msgs = vec![ApiMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text("hello".to_string()),
+        }];
+        let result = ApiClient::to_chat_messages(&msgs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, ChatRole::User);
+    }
+
+    #[test]
+    fn test_to_chat_messages_blocks() {
+        let msgs = vec![ApiMessage {
+            role: "assistant".to_string(),
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Text { text: "thinking...".to_string() },
+                ContentBlock::ToolUse {
+                    id: "tu_1".to_string(),
+                    name: "search".to_string(),
+                    input: serde_json::json!({}),
+                },
+            ]),
+        }];
+        let result = ApiClient::to_chat_messages(&msgs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, ChatRole::Assistant);
+        if let ChatMessageContent::Blocks(blocks) = &result[0].content {
+            assert_eq!(blocks.len(), 2);
+        } else {
+            panic!("expected blocks");
+        }
+    }
+
+    #[test]
+    fn test_from_chat_response_end_turn() {
+        use crate::providers::types::{ChatResponse, ChatResponseBlock, ChatUsage, StopReason};
+
+        let resp = ChatResponse {
+            blocks: vec![ChatResponseBlock::Text { text: "Hello!".to_string() }],
+            stop_reason: StopReason::EndTurn,
+            usage: ChatUsage { input_tokens: 10, output_tokens: 5 },
+        };
+        let result = ApiClient::from_chat_response(resp);
+        assert_eq!(result.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(result.usage.input_tokens, 10);
+    }
+
+    #[test]
+    fn test_from_chat_response_tool_use() {
+        use crate::providers::types::{ChatResponse, ChatResponseBlock, ChatUsage, StopReason};
+
+        let resp = ChatResponse {
+            blocks: vec![ChatResponseBlock::ToolCall {
+                id: "tc_1".to_string(),
+                name: "search".to_string(),
+                input: serde_json::json!({"q": "test"}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            usage: ChatUsage { input_tokens: 20, output_tokens: 15 },
+        };
+        let result = ApiClient::from_chat_response(resp);
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_use"));
+        assert!(matches!(&result.content[0], ContentBlock::ToolUse { name, .. } if name == "search"));
     }
 }

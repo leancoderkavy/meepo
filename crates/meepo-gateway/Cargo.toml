@@ -1,0 +1,22 @@
+[package]
+name = "meepo-gateway"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+meepo-core = { path = "../meepo-core" }
+meepo-knowledge = { path = "../meepo-knowledge" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite = "0.26"

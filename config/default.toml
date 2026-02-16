@@ -20,6 +20,42 @@ memory_file = "MEMORY.md"
 api_key = "${ANTHROPIC_API_KEY}"
 base_url = "https://api.anthropic.com"
 
+# ── OpenAI (optional — failover or primary) ────────────────────
+# Get key → https://platform.openai.com/api-keys
+# export OPENAI_API_KEY="sk-..."
+#
+# [providers.openai]
+# api_key = "${OPENAI_API_KEY}"
+# base_url = "https://api.openai.com"
+# model = "gpt-4o"
+# max_tokens = 4096
+
+# ── Google Gemini (optional — failover or primary) ─────────────
+# Get key → https://aistudio.google.com/apikey
+# export GOOGLE_AI_API_KEY="AIza..."
+#
+# [providers.google]
+# api_key = "${GOOGLE_AI_API_KEY}"
+# model = "gemini-2.0-flash"
+# max_tokens = 4096
+
+# ── OpenAI-Compatible (optional — Ollama, Together, Groq, etc.)
+# Any endpoint that speaks the OpenAI /v1/chat/completions format.
+#
+# [providers.openai_compat]
+# name = "ollama"
+# api_key = ""
+# base_url = "http://localhost:11434/v1"
+# model = "llama3"
+# max_tokens = 4096
+
+# ── Failover Order ─────────────────────────────────────────────
+# When the primary provider fails (rate limit, outage), try the next.
+# List provider names: "anthropic", "openai", "google", "openai_compat"
+# Empty = no failover (only use the default_model's provider).
+#
+# failover_order = ["anthropic", "openai", "google"]
+
 # ── Tavily (optional — web search) ──────────────────────────────
 # Get key → https://app.tavily.com/home  (free tier, no card)
 # export TAVILY_API_KEY="tvly-..."
@@ -487,3 +523,20 @@ inactive_days_threshold = 30        # flag contacts not reached in N days
 [browser]
 enabled = true
 default_browser = "safari"              # "safari" or "chrome"
+
+
+# ── Gateway (WebSocket Control Plane) ──────────────────────────
+# Run a WebSocket server so clients (WebChat, macOS app, mobile nodes)
+# can connect to Meepo remotely. The Gateway is the foundation for
+# multi-device access, WebChat UI, and companion apps.
+#
+# When enabled, the Gateway starts alongside the daemon on `meepo start`.
+# Clients connect via ws://<bind>:<port>/ws with bearer token auth.
+#
+# export MEEPO_GATEWAY_TOKEN="your-secret-token"
+
+[gateway]
+enabled = false
+bind = "127.0.0.1"                      # Use 0.0.0.0 for remote access
+port = 18789
+auth_token = "${MEEPO_GATEWAY_TOKEN}"

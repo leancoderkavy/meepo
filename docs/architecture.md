@@ -141,6 +141,16 @@ graph TB
         AgentCard[AgentCard]
     end
 
+    subgraph GW["meepo-gateway"]
+        GWServer[GatewayServer Axum]
+        GWEvents[EventBus]
+        GWSess[SessionManager]
+    end
+
+    subgraph Mobile["iOS Companion App"]
+        iOSApp[MeepoApp SwiftUI]
+    end
+
     Start --> AutoLoop
     AutoLoop --> Agent
     Start --> Bus
@@ -180,6 +190,13 @@ graph TB
 
     A2aServer --> Agent
     A2aClient -->|HTTP| PeerAgent[Peer Agents]
+
+    Start --> GWServer
+    GWServer --> Agent
+    GWServer --> GWSess
+    Agent --> GWEvents
+    GWEvents -->|"broadcast"| GWServer
+    iOSApp -->|"WebSocket"| GWServer
 
     Platform -->|AppleScript| Mail[Mail.app]
     Platform -->|AppleScript| Cal[Calendar.app]

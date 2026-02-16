@@ -922,8 +922,6 @@ fn detect_shell_rc() -> Option<PathBuf> {
 /// On macOS/Linux: appends `export VAR="value"` to the shell RC file.
 /// On Windows: sets a User-scope environment variable via PowerShell.
 fn save_env_var_persistent(name: &str, value: &str) -> Result<()> {
-    use std::io::Write;
-
     #[cfg(target_os = "windows")]
     {
         // Check if already set in User scope
@@ -951,13 +949,15 @@ fn save_env_var_persistent(name: &str, value: &str) -> Result<()> {
                 ),
             ])
             .output()?;
-        std::env::set_var(name, value);
+        // SAFETY: This is called during single-threaded CLI setup, not in the async runtime.
+        unsafe { std::env::set_var(name, value) };
         println!("  ✓ Saved {} to User environment variables.", name);
         return Ok(());
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        use std::io::Write;
         let shell_rc = detect_shell_rc();
         if let Some(rc_path) = &shell_rc {
             let rc_content = std::fs::read_to_string(rc_path).unwrap_or_default();

@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #374151;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4b5563;
+  }
+}
+
+.markdown-body pre {
+  @apply bg-gray-800 rounded-lg p-3 overflow-x-auto text-sm my-2;
+}
+
+.markdown-body code {
+  @apply bg-gray-800 px-1.5 py-0.5 rounded text-sm text-meepo-300;
+}
+
+.markdown-body pre code {
+  @apply bg-transparent p-0;
+}
+
+.markdown-body p {
+  @apply mb-2 last:mb-0;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply ml-4 mb-2;
+}
+
+.markdown-body ul {
+  @apply list-disc;
+}
+
+.markdown-body ol {
+  @apply list-decimal;
+}
+
+.markdown-body li {
+  @apply mb-1;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  @apply font-semibold mb-2 mt-3;
+}
+
+.markdown-body h1 { @apply text-xl; }
+.markdown-body h2 { @apply text-lg; }
+.markdown-body h3 { @apply text-base; }
+
+.markdown-body blockquote {
+  @apply border-l-2 border-gray-600 pl-3 italic text-gray-400 my-2;
+}
+
+.markdown-body a {
+  @apply text-meepo-400 hover:text-meepo-300 underline;
+}
+
+@keyframes pulse-dot {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+
+.typing-dot {
+  animation: pulse-dot 1.4s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }

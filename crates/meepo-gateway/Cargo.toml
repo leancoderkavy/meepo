@@ -16,6 +16,8 @@ uuid = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
 futures-util = "0.3"
+rust-embed = { version = "8", features = ["mime-guess"] }
+mime_guess = "2"
 
 [dev-dependencies]
 tempfile = "3"

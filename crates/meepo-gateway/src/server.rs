@@ -64,6 +64,8 @@ impl GatewayServer {
             .route("/ws", get(ws_handler))
             .route("/api/status", get(status_handler))
             .route("/api/sessions", get(sessions_handler))
+            .route("/", get(crate::webchat::index_handler))
+            .route("/assets/{*path}", get(crate::webchat::static_handler))
             .layer(CorsLayer::permissive())
             .with_state(self.state.clone())
     }

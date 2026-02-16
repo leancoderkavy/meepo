@@ -8,5 +8,6 @@ pub mod events;
 pub mod protocol;
 pub mod server;
 pub mod session;
+pub mod webchat;
 
 pub use server::GatewayServer;

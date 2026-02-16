@@ -963,32 +963,83 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
     );
 
     // Initialize API client via ModelRouter (multi-provider with failover)
+    let use_ollama = cfg.agent.default_model == "ollama";
     let api = {
         use meepo_core::providers::anthropic::AnthropicProvider;
+        use meepo_core::providers::openai_compat::OpenAiCompatProvider;
         use meepo_core::providers::router::ModelRouter;
 
         let mut providers: Vec<Box<dyn meepo_core::providers::types::LlmProvider>> = Vec::new();
 
-        // Primary: Anthropic (required)
-        let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
-        if api_key.is_empty() || api_key.contains("${") {
-            anyhow::bail!(
-                "ANTHROPIC_API_KEY is not set.\n\n\
-                 Fix it with:\n  \
-                 export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
-                 Or run the setup wizard:\n  \
-                 meepo setup\n\n\
-                 Get a key at: https://console.anthropic.com/settings/keys"
-            );
+        if use_ollama {
+            // Primary: Ollama (via OpenAI-compatible endpoint)
+            let ollama_cfg = cfg.providers.ollama.as_ref()
+                .ok_or_else(|| anyhow::anyhow!(
+                    "default_model is \"ollama\" but [providers.ollama] is not configured.\n\n\
+                     Add to your config.toml:\n  \
+                     [providers.ollama]\n  \
+                     base_url = \"http://localhost:11434\"\n  \
+                     model = \"llama3.2\""
+                ))?;
+            let url = format!("{}/v1", shellexpand_str(&ollama_cfg.base_url));
+            providers.push(Box::new(OpenAiCompatProvider::new(
+                "ollama".to_string(),
+                String::new(),
+                ollama_cfg.model.clone(),
+                url,
+                ollama_cfg.max_tokens,
+            )));
+            info!("Provider: ollama/{}", ollama_cfg.model);
+
+            // Optional failover: Anthropic (if key is set)
+            let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
+            if !api_key.is_empty() && !api_key.contains("${") {
+                let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
+                providers.push(Box::new(AnthropicProvider::new(
+                    api_key,
+                    "claude-sonnet-4-20250514".to_string(),
+                    base_url,
+                    cfg.agent.max_tokens,
+                )));
+                info!("Provider: anthropic (failover)");
+            }
+        } else {
+            // Primary: Anthropic (required when not using Ollama)
+            let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
+            if api_key.is_empty() || api_key.contains("${") {
+                anyhow::bail!(
+                    "ANTHROPIC_API_KEY is not set.\n\n\
+                     Fix it with:\n  \
+                     export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
+                     Or use Ollama (no API key needed):\n  \
+                     Set default_model = \"ollama\" in config.toml\n\n\
+                     Or run the setup wizard:\n  \
+                     meepo setup\n\n\
+                     Get a key at: https://console.anthropic.com/settings/keys"
+                );
+            }
+            let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
+            providers.push(Box::new(AnthropicProvider::new(
+                api_key,
+                cfg.agent.default_model.clone(),
+                base_url,
+                cfg.agent.max_tokens,
+            )));
+            info!("Provider: anthropic/{}", cfg.agent.default_model);
+
+            // Optional failover: Ollama
+            if let Some(ollama_cfg) = &cfg.providers.ollama {
+                let url = format!("{}/v1", shellexpand_str(&ollama_cfg.base_url));
+                providers.push(Box::new(OpenAiCompatProvider::new(
+                    "ollama".to_string(),
+                    String::new(),
+                    ollama_cfg.model.clone(),
+                    url,
+                    ollama_cfg.max_tokens,
+                )));
+                info!("Provider: ollama/{} (failover)", ollama_cfg.model);
+            }
         }
-        let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
-        providers.push(Box::new(AnthropicProvider::new(
-            api_key,
-            cfg.agent.default_model.clone(),
-            base_url,
-            cfg.agent.max_tokens,
-        )));
-        info!("Provider: anthropic/{}", cfg.agent.default_model);
 
         // Optional: OpenAI
         if let Some(openai_cfg) = &cfg.providers.openai {
@@ -1020,9 +1071,8 @@ async fn cmd_start(config_path: &Option<PathBuf>) -> Result<()> {
             }
         }
 
-        // Optional: OpenAI-compatible
+        // Optional: OpenAI-compatible (generic)
         if let Some(compat_cfg) = &cfg.providers.openai_compat {
-            use meepo_core::providers::openai_compat::OpenAiCompatProvider;
             let key = shellexpand_str(&compat_cfg.api_key);
             let url = shellexpand_str(&compat_cfg.base_url);
             let name = if compat_cfg.name.is_empty() {
@@ -2527,21 +2577,45 @@ async fn cmd_stop() -> Result<()> {
 async fn cmd_ask(config_path: &Option<PathBuf>, message: &str) -> Result<()> {
     let cfg = MeepoConfig::load(config_path)?;
 
-    let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
-    if api_key.is_empty() || api_key.contains("${") {
-        anyhow::bail!(
-            "ANTHROPIC_API_KEY is not set.\n\n\
-             Fix it with:\n  \
-             export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
-             Or run the setup wizard:\n  \
-             meepo setup\n\n\
-             Get a key at: https://console.anthropic.com/settings/keys"
-        );
-    }
-    let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
-    let api = meepo_core::api::ApiClient::new(api_key, Some(cfg.agent.default_model.clone()))
-        .with_max_tokens(cfg.agent.max_tokens)
-        .with_base_url(base_url);
+    let use_ollama = cfg.agent.default_model == "ollama";
+    let api = {
+        use meepo_core::providers::router::ModelRouter;
+
+        if use_ollama {
+            let ollama_cfg = cfg.providers.ollama.as_ref()
+                .ok_or_else(|| anyhow::anyhow!(
+                    "default_model is \"ollama\" but [providers.ollama] is not configured"
+                ))?;
+            let url = format!("{}/v1", shellexpand_str(&ollama_cfg.base_url));
+            use meepo_core::providers::openai_compat::OpenAiCompatProvider;
+            let provider = Box::new(OpenAiCompatProvider::new(
+                "ollama".to_string(),
+                String::new(),
+                ollama_cfg.model.clone(),
+                url,
+                ollama_cfg.max_tokens,
+            ));
+            meepo_core::api::ApiClient::from_router(ModelRouter::single(provider))
+        } else {
+            let api_key = shellexpand_str(&cfg.providers.anthropic.api_key);
+            if api_key.is_empty() || api_key.contains("${") {
+                anyhow::bail!(
+                    "ANTHROPIC_API_KEY is not set.\n\n\
+                     Fix it with:\n  \
+                     export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
+                     Or use Ollama (no API key needed):\n  \
+                     Set default_model = \"ollama\" in config.toml\n\n\
+                     Or run the setup wizard:\n  \
+                     meepo setup\n\n\
+                     Get a key at: https://console.anthropic.com/settings/keys"
+                );
+            }
+            let base_url = shellexpand_str(&cfg.providers.anthropic.base_url);
+            meepo_core::api::ApiClient::new(api_key, Some(cfg.agent.default_model.clone()))
+                .with_max_tokens(cfg.agent.max_tokens)
+                .with_base_url(base_url)
+        }
+    };
 
     // Load context
     let workspace = shellexpand(&cfg.memory.workspace);

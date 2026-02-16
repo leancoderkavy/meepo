@@ -12,7 +12,7 @@ system_prompt_file = "SOUL.md"          # in workspace dir
 memory_file = "MEMORY.md"
 
 
-# ── Anthropic (required) ────────────────────────────────────────
+# ── Anthropic (required unless using Ollama) ───────────────────
 # Get key → https://console.anthropic.com/settings/keys
 # export ANTHROPIC_API_KEY="sk-ant-..."
 
@@ -39,19 +39,32 @@ base_url = "https://api.anthropic.com"
 # model = "gemini-2.0-flash"
 # max_tokens = 4096
 
-# ── OpenAI-Compatible (optional — Ollama, Together, Groq, etc.)
+# ── Ollama (optional — local/self-hosted LLMs) ──────────────────
+# Run Ollama locally: https://ollama.ai
+# 1. Install: curl -fsSL https://ollama.ai/install.sh | sh
+# 2. Pull a model: ollama pull llama3.2
+# 3. Start server: ollama serve (runs on http://localhost:11434)
+#
+# To use Ollama as primary, set agent.default_model = "ollama"
+#
+# [providers.ollama]
+# base_url = "http://localhost:11434"
+# model = "llama3.2"
+# max_tokens = 4096
+
+# ── OpenAI-Compatible (optional — Together, Groq, LM Studio, etc.)
 # Any endpoint that speaks the OpenAI /v1/chat/completions format.
 #
 # [providers.openai_compat]
-# name = "ollama"
-# api_key = ""
-# base_url = "http://localhost:11434/v1"
-# model = "llama3"
+# name = "together"
+# api_key = "${CUSTOM_LLM_API_KEY}"
+# base_url = "https://api.together.xyz/v1"
+# model = "meta-llama/Llama-3-70b-chat-hf"
 # max_tokens = 4096
 
 # ── Failover Order ─────────────────────────────────────────────
 # When the primary provider fails (rate limit, outage), try the next.
-# List provider names: "anthropic", "openai", "google", "openai_compat"
+# List provider names: "anthropic", "openai", "google", "ollama", "openai_compat"
 # Empty = no failover (only use the default_model's provider).
 #
 # failover_order = ["anthropic", "openai", "google"]

@@ -9,6 +9,7 @@ Meepo runs as a daemon on your machine — a prime agent that splits into clones
 - **Multi-channel messaging** — Discord DMs, Slack DMs, iMessage (macOS), email (macOS), or CLI one-shots
 - **75+ built-in tools** — Email, calendar, reminders, notes, contacts, browser automation, web search, file browsing, code PRs, music control, screen capture, lifestyle integrations (research, tasks, finance, health, travel, social), and more
 - **Autonomous agent loop** — Observe/think/act cycle with goal tracking, proactive actions, and notification alerts
+- **Multiple LLM providers** — Anthropic Claude (API), Ollama (local models), OpenAI, Google Gemini, or any OpenAI-compatible endpoint with automatic failover
 - **Cross-platform** — macOS (AppleScript) and Windows (PowerShell/Outlook COM) with platform abstraction layer
 - **MCP support** — Expose Meepo's tools as an MCP server (STDIO) for Claude Desktop, Cursor, etc. — and consume tools from external MCP servers
 - **A2A protocol** — Google's Agent-to-Agent protocol for delegating tasks to/from peer AI agents over HTTP
@@ -25,10 +26,43 @@ Meepo runs as a daemon on your machine — a prime agent that splits into clones
 ## Requirements
 
 - macOS or Windows
-- Anthropic API key (required)
+- LLM provider: Either Anthropic API key **or** Ollama installed locally
+  - **Anthropic Claude**: Requires API key from https://console.anthropic.com
+  - **Ollama**: Free, runs locally — supports Llama, Mistral, CodeLlama, and more
 - Optional: Tavily API key (enables web search)
 - Optional: Discord bot token, Slack bot token
 - Rust toolchain only needed when building from source
+
+### Using Ollama (Local LLMs)
+
+Meepo supports [Ollama](https://ollama.ai) for running local LLMs without requiring an API key:
+
+1. **Install Ollama:**
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ```
+
+2. **Pull a model:**
+   ```bash
+   ollama pull llama3.2        # or mistral, codellama, phi3, etc.
+   ```
+
+3. **Configure Meepo** to use Ollama in `~/.meepo/config.toml`:
+   ```toml
+   [agent]
+   default_model = "ollama"
+
+   [providers.ollama]
+   base_url = "http://localhost:11434"
+   model = "llama3.2"
+   ```
+
+4. **Start Meepo:**
+   ```bash
+   meepo start
+   ```
+
+Ollama runs entirely on your machine — no API key needed, no data sent to external servers.
 
 ### Platform Notes
 

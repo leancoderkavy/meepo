@@ -19,6 +19,8 @@ use tracing::{debug, error, info, warn};
 
 const MAX_MESSAGE_CHANNELS: usize = 1000;
 const MAX_MESSAGE_SIZE: usize = 10_240;
+/// Discord's maximum message length in characters
+const DISCORD_MAX_LENGTH: usize = 2000;
 
 /// Type key for storing the incoming message sender in Serenity's TypeMap
 struct MessageSender;
@@ -216,6 +218,60 @@ fn is_fatal_gateway_error(err: &serenity::Error) -> bool {
     }
 }
 
+/// Split a message into chunks that fit Discord's 2000 character limit.
+/// Tries to split at newlines to avoid breaking in the middle of sentences.
+fn split_message(content: &str) -> Vec<String> {
+    if content.len() <= DISCORD_MAX_LENGTH {
+        return vec![content.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+
+    for line in content.lines() {
+        // If a single line is longer than the limit, split it by words
+        if line.len() > DISCORD_MAX_LENGTH {
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.clone());
+                current_chunk.clear();
+            }
+
+            for word in line.split_whitespace() {
+                if current_chunk.len() + word.len() + 1 > DISCORD_MAX_LENGTH
+                    && !current_chunk.is_empty()
+                {
+                    chunks.push(current_chunk.clone());
+                    current_chunk.clear();
+                }
+                if !current_chunk.is_empty() {
+                    current_chunk.push(' ');
+                }
+                current_chunk.push_str(word);
+            }
+            continue;
+        }
+
+        let line_with_newline = if current_chunk.is_empty() {
+            line.to_string()
+        } else {
+            format!("\n{}", line)
+        };
+
+        if current_chunk.len() + line_with_newline.len() > DISCORD_MAX_LENGTH {
+            chunks.push(current_chunk.clone());
+            current_chunk = line.to_string();
+        } else {
+            current_chunk.push_str(&line_with_newline);
+        }
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    chunks
+}
+
 #[async_trait]
 impl MessageChannel for DiscordChannel {
     async fn start(&self, tx: mpsc::Sender<IncomingMessage>) -> Result<()> {
@@ -355,16 +411,33 @@ impl MessageChannel for DiscordChannel {
             return Ok(());
         }
 
-        // Normal response: send text message
+        // Normal response: send text message, splitting if needed
         debug!("Sending Discord message");
-        channel_id
-            .say(http, &msg.content)
-            .await
-            .map_err(|e| anyhow!("Failed to send Discord message: {}", e))?;
+        let chunks = split_message(&msg.content);
+
+        if chunks.len() > 1 {
+            debug!(
+                "Message split into {} chunks due to Discord's character limit",
+                chunks.len()
+            );
+        }
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            channel_id
+                .say(http, chunk)
+                .await
+                .map_err(|e| anyhow!("Failed to send Discord message chunk {}: {}", i + 1, e))?;
+
+            // Small delay between chunks to ensure proper ordering
+            if i < chunks.len() - 1 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
 
         info!(
-            "Discord message sent successfully to channel {}",
-            channel_id
+            "Discord message sent successfully to channel {} ({} chunk(s))",
+            channel_id,
+            chunks.len()
         );
         Ok(())
     }
@@ -406,5 +479,55 @@ mod tests {
         let channel = DiscordChannel::new("token".to_string(), vec![]);
         let ids = channel.parse_user_ids().unwrap();
         assert_eq!(ids.len(), 0);
+    }
+
+    #[test]
+    fn test_split_message_short() {
+        let short_msg = "Hello, world!";
+        let chunks = split_message(short_msg);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], short_msg);
+    }
+
+    #[test]
+    fn test_split_message_at_limit() {
+        let msg = "a".repeat(DISCORD_MAX_LENGTH);
+        let chunks = split_message(&msg);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LENGTH);
+    }
+
+    #[test]
+    fn test_split_message_long() {
+        let line = "a".repeat(100);
+        let msg = format!("{}\n", line).repeat(25); // 2525 chars
+        let chunks = split_message(&msg);
+
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            assert!(chunk.len() <= DISCORD_MAX_LENGTH);
+        }
+    }
+
+    #[test]
+    fn test_split_message_preserves_newlines() {
+        let msg = format!("Line 1\nLine 2\n{}", "a".repeat(1950));
+        let chunks = split_message(&msg);
+
+        assert!(chunks[0].contains("Line 1"));
+        for chunk in &chunks {
+            assert!(chunk.len() <= DISCORD_MAX_LENGTH);
+        }
+    }
+
+    #[test]
+    fn test_split_message_very_long_line() {
+        let long_line = (0..600).map(|_| "word").collect::<Vec<_>>().join(" ");
+        let chunks = split_message(&long_line);
+
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            assert!(chunk.len() <= DISCORD_MAX_LENGTH);
+        }
     }
 }

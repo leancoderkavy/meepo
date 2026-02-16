@@ -70,6 +70,8 @@ pub struct ProvidersConfig {
     #[serde(default)]
     pub openai_compat: Option<OpenAiCompatProviderConfig>,
     #[serde(default)]
+    pub ollama: Option<OllamaConfig>,
+    #[serde(default)]
     pub tavily: Option<TavilyConfig>,
     #[serde(default)]
     pub failover_order: Vec<String>,
@@ -180,6 +182,28 @@ impl std::fmt::Debug for OpenAiCompatProviderConfig {
 }
 
 fn default_compat_max_tokens() -> u32 {
+    4096
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
+    #[serde(default = "default_ollama_max_tokens")]
+    pub max_tokens: u32,
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "llama3.2".to_string()
+}
+
+fn default_ollama_max_tokens() -> u32 {
     4096
 }
 

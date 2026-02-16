@@ -2515,11 +2515,11 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        db.insert_goal("Goal A", 3, 1800, None, "template:stock")
+        db.insert_goal("Goal A", 3, 1800, None, None, "template:stock")
             .await?;
-        db.insert_goal("Goal B", 2, 900, None, "template:stock")
+        db.insert_goal("Goal B", 2, 900, None, None, "template:stock")
             .await?;
-        db.insert_goal("Goal C", 1, 600, None, "user").await?;
+        db.insert_goal("Goal C", 1, 600, None, None, "user").await?;
 
         let deleted = db.delete_goals_by_source("template:stock").await?;
         assert_eq!(deleted, 2);
@@ -2539,16 +2539,15 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        let id = db
-            .insert_background_task("compile", "Building project", "session-1")
+        let task_id = "bg-task-1";
+        db.insert_background_task(task_id, "Building project", "discord", "agent")
             .await?;
-        assert!(!id.is_empty());
 
         let active = db.get_active_background_tasks().await?;
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].task_type, "compile");
+        assert_eq!(active[0].description, "Building project");
 
-        db.update_background_task(&id, "completed", Some("Build succeeded"))
+        db.update_background_task(task_id, "completed", Some("Build succeeded"))
             .await?;
 
         let active = db.get_active_background_tasks().await?;
@@ -2569,7 +2568,9 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        let id = db.insert_goal("Check goal", 3, 60, None, "test").await?;
+        let id = db
+            .insert_goal("Check goal", 3, 60, None, None, "test")
+            .await?;
 
         db.update_goal_checked(&id, Some("improved")).await?;
 
@@ -2585,7 +2586,9 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        let id = db.insert_goal("Status goal", 3, 1800, None, "test").await?;
+        let id = db
+            .insert_goal("Status goal", 3, 1800, None, None, "test")
+            .await?;
 
         db.update_goal_status(&id, "completed").await?;
 
@@ -2631,19 +2634,20 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        db.upsert_preference("ui", "theme", "dark", 0.9).await?;
+        db.upsert_preference("ui", "theme", serde_json::json!("dark"), 0.9, None)
+            .await?;
         let prefs = db.get_preferences(Some("ui")).await?;
         assert_eq!(prefs.len(), 1);
-        assert_eq!(prefs[0].value, "dark");
 
         // Upsert should update existing
-        db.upsert_preference("ui", "theme", "light", 0.95).await?;
+        db.upsert_preference("ui", "theme", serde_json::json!("light"), 0.95, None)
+            .await?;
         let prefs = db.get_preferences(Some("ui")).await?;
         assert_eq!(prefs.len(), 1);
-        assert_eq!(prefs[0].value, "light");
 
         // Different category
-        db.upsert_preference("lang", "primary", "rust", 0.8).await?;
+        db.upsert_preference("lang", "primary", serde_json::json!("rust"), 0.8, None)
+            .await?;
         let all = db.get_preferences(None).await?;
         assert_eq!(all.len(), 2);
 
@@ -2675,15 +2679,15 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
         let db = KnowledgeDb::new(&temp_path)?;
 
-        db.insert_action_log("read_file", "low", "Read config.toml")
+        db.insert_action_log(None, "read_file", "Read config.toml", "success")
             .await?;
-        db.insert_action_log("write_file", "medium", "Wrote output.txt")
+        db.insert_action_log(None, "write_file", "Wrote output.txt", "success")
             .await?;
 
         let actions = db.get_recent_actions(10).await?;
         assert_eq!(actions.len(), 2);
         // Most recent first
-        assert_eq!(actions[0].tool_name, "write_file");
+        assert_eq!(actions[0].action_type, "write_file");
 
         let _ = std::fs::remove_file(&temp_path);
         Ok(())

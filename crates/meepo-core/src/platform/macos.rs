@@ -1705,7 +1705,11 @@ return "Quit {}"
         // Use pkill directly instead of do shell script to avoid shell injection
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            Command::new("pkill").arg("-9").arg("-x").arg(app_name).output(),
+            Command::new("pkill")
+                .arg("-9")
+                .arg("-x")
+                .arg(app_name)
+                .output(),
         )
         .await
         .map_err(|_| anyhow::anyhow!("Force quit timed out"))?

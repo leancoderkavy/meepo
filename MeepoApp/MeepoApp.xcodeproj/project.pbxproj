@@ -1,0 +1,375 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02B707689BA17B24DD77C893 /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660622AEA9FBD89828D6E420 /* SessionsView.swift */; };
+		1CC1885EB5623D267698941E /* MeepoClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8739FBD16376543E7AF98D5 /* MeepoClient.swift */; };
+		2199224DCEB49CF81C324734 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6735853621071F2F888755E /* ContentView.swift */; };
+		3D6938299C2722A010448BB8 /* MeepoTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C3BE8352E47176130FC0B6E /* MeepoTheme.swift */; };
+		61E2CBB5998845A3A3DC5327 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F19381FA074B86F79B3099B /* Session.swift */; };
+		631301D2D055F013FBD80C2E /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A29A6F2CFC316E00E20870A2 /* ChatMessage.swift */; };
+		698D209DD6F0901E8071686D /* MeepoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61138BE5A00B39C97A5A5CB4 /* MeepoApp.swift */; };
+		6C9A910BA9F3453657A89949 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7B90775B7749D1A268B647A /* SettingsView.swift */; };
+		72BC84FCB5BEF1092ED35BEB /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9648D98261F7A41FF9AC0325 /* ChatView.swift */; };
+		8400F6B4CF80964C789CEE0F /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04A3E45ACCF5DBD588C513E9 /* SettingsStore.swift */; };
+		8BAA4E3A647066B47591687C /* GatewayProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1B912A4F3AC981C5966E69 /* GatewayProtocol.swift */; };
+		B89FCDFC40026FD3890FD7DD /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C98078DAC6BDD10EF0FD4572 /* ChatViewModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		04A3E45ACCF5DBD588C513E9 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		61138BE5A00B39C97A5A5CB4 /* MeepoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeepoApp.swift; sourceTree = "<group>"; };
+		660622AEA9FBD89828D6E420 /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
+		8C3BE8352E47176130FC0B6E /* MeepoTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeepoTheme.swift; sourceTree = "<group>"; };
+		8F19381FA074B86F79B3099B /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
+		9648D98261F7A41FF9AC0325 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		A29A6F2CFC316E00E20870A2 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		A6735853621071F2F888755E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		C8739FBD16376543E7AF98D5 /* MeepoClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeepoClient.swift; sourceTree = "<group>"; };
+		C98078DAC6BDD10EF0FD4572 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		CF518DFDEF87290E8755836E /* MeepoApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MeepoApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F7B90775B7749D1A268B647A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		FA1B912A4F3AC981C5966E69 /* GatewayProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayProtocol.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0FE2196EDE9CC5322B9A1203 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				61138BE5A00B39C97A5A5CB4 /* MeepoApp.swift */,
+				7F070F09BA47F75B4A660A43 /* Models */,
+				57BBA9B089971E3924E0CCD8 /* Networking */,
+				947BB6C7AF17DF1AD13296B3 /* Theme */,
+				6D6409D978931B7136171851 /* ViewModels */,
+				5F5BDD45BFFC3AC4D2E86741 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		57BBA9B089971E3924E0CCD8 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				C8739FBD16376543E7AF98D5 /* MeepoClient.swift */,
+				04A3E45ACCF5DBD588C513E9 /* SettingsStore.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		5F5BDD45BFFC3AC4D2E86741 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				9648D98261F7A41FF9AC0325 /* ChatView.swift */,
+				A6735853621071F2F888755E /* ContentView.swift */,
+				660622AEA9FBD89828D6E420 /* SessionsView.swift */,
+				F7B90775B7749D1A268B647A /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		6D6409D978931B7136171851 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				C98078DAC6BDD10EF0FD4572 /* ChatViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		765A5A329342C90BC9E1E8D7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CF518DFDEF87290E8755836E /* MeepoApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7F070F09BA47F75B4A660A43 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A29A6F2CFC316E00E20870A2 /* ChatMessage.swift */,
+				FA1B912A4F3AC981C5966E69 /* GatewayProtocol.swift */,
+				8F19381FA074B86F79B3099B /* Session.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		947BB6C7AF17DF1AD13296B3 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				8C3BE8352E47176130FC0B6E /* MeepoTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		BCF21787525226C0AA8FDCEB = {
+			isa = PBXGroup;
+			children = (
+				0FE2196EDE9CC5322B9A1203 /* Sources */,
+				765A5A329342C90BC9E1E8D7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B4817D575CEDF9C9D4084BBA /* MeepoApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B31B6E8A3FDF2BCA655FCAE7 /* Build configuration list for PBXNativeTarget "MeepoApp" */;
+			buildPhases = (
+				E305086D47FCC6855E79ECA0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MeepoApp;
+			packageProductDependencies = (
+			);
+			productName = MeepoApp;
+			productReference = CF518DFDEF87290E8755836E /* MeepoApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B84CD7F0C8668E365146C3D6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					B4817D575CEDF9C9D4084BBA = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = D3C4A3BF67FCFEADB101586B /* Build configuration list for PBXProject "MeepoApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = BCF21787525226C0AA8FDCEB;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B4817D575CEDF9C9D4084BBA /* MeepoApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E305086D47FCC6855E79ECA0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				631301D2D055F013FBD80C2E /* ChatMessage.swift in Sources */,
+				72BC84FCB5BEF1092ED35BEB /* ChatView.swift in Sources */,
+				B89FCDFC40026FD3890FD7DD /* ChatViewModel.swift in Sources */,
+				2199224DCEB49CF81C324734 /* ContentView.swift in Sources */,
+				8BAA4E3A647066B47591687C /* GatewayProtocol.swift in Sources */,
+				698D209DD6F0901E8071686D /* MeepoApp.swift in Sources */,
+				1CC1885EB5623D267698941E /* MeepoClient.swift in Sources */,
+				3D6938299C2722A010448BB8 /* MeepoTheme.swift in Sources */,
+				61E2CBB5998845A3A3DC5327 /* Session.swift in Sources */,
+				02B707689BA17B24DD77C893 /* SessionsView.swift in Sources */,
+				8400F6B4CF80964C789CEE0F /* SettingsStore.swift in Sources */,
+				6C9A910BA9F3453657A89949 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2FCE405D9ADB9D6CB166EE3F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		479E608534EDA044915D5DBE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meepo.app;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B5DEACA933762360BCD7CA6E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		BB4224B91A5FE4E630B75DFD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meepo.app;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B31B6E8A3FDF2BCA655FCAE7 /* Build configuration list for PBXNativeTarget "MeepoApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB4224B91A5FE4E630B75DFD /* Debug */,
+				479E608534EDA044915D5DBE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D3C4A3BF67FCFEADB101586B /* Build configuration list for PBXProject "MeepoApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B5DEACA933762360BCD7CA6E /* Debug */,
+				2FCE405D9ADB9D6CB166EE3F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B84CD7F0C8668E365146C3D6 /* Project object */;
+}

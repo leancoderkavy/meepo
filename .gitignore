@@ -32,7 +32,6 @@ docs/plans/
 
 # Accidental artifacts
 \[path/
-MeepoApp/
 
 # Installer build artifacts
 installer/dist/

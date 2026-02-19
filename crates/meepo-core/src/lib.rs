@@ -16,6 +16,7 @@ pub mod context;
 pub mod corrective_rag;
 pub mod doctor;
 pub mod guardrails;
+pub mod intent;
 pub mod middleware;
 pub mod notifications;
 pub mod orchestrator;
@@ -39,6 +40,7 @@ pub use api::{ApiClient, ApiMessage, ApiResponse, ContentBlock, MessageContent, 
 pub use autonomy::{AutonomousLoop, AutonomyConfig};
 pub use context::build_system_prompt;
 pub use corrective_rag::CorrectiveRagConfig;
+pub use intent::{IntentConfig, UserIntent};
 pub use middleware::{AgentMiddleware, MiddlewareChain, MiddlewareContext};
 pub use notifications::{NotificationService, NotifyConfig, NotifyEvent};
 pub use orchestrator::{

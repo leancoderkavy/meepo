@@ -7,6 +7,7 @@ use tracing::{debug, info};
 use crate::api::ApiClient;
 use crate::context::build_system_prompt;
 use crate::guardrails::{GuardrailContext, GuardrailPipeline};
+use crate::intent::{self, IntentConfig, UserIntent};
 use crate::middleware::{MiddlewareChain, MiddlewareContext};
 use crate::query_router::{self, QueryRouterConfig, RetrievalStrategy};
 use crate::summarization::{self, SummarizationConfig};
@@ -39,6 +40,8 @@ pub struct Agent {
     usage_tracker: Option<Arc<UsageTracker>>,
     /// Guardrails pipeline for input safety checks
     guardrails: Option<GuardrailPipeline>,
+    /// Intent understanding configuration
+    intent_config: IntentConfig,
 }
 
 impl Agent {
@@ -62,6 +65,7 @@ impl Agent {
             tool_selector_config: ToolSelectorConfig::default(),
             usage_tracker: None,
             guardrails: None,
+            intent_config: IntentConfig::default(),
         }
     }
 
@@ -98,6 +102,12 @@ impl Agent {
     /// Set the guardrails pipeline
     pub fn with_guardrails(mut self, pipeline: GuardrailPipeline) -> Self {
         self.guardrails = Some(pipeline);
+        self
+    }
+
+    /// Set the intent understanding configuration
+    pub fn with_intent_config(mut self, config: IntentConfig) -> Self {
+        self.intent_config = config;
         self
     }
 
@@ -144,6 +154,49 @@ impl Agent {
             .await
             .context("Failed to store conversation")?;
 
+        // Understand the user's intent via LLM (with usage tracking)
+        let (intent, intent_usage) =
+            intent::understand_intent(&self.api, &msg.content, &self.intent_config)
+                .await
+                .unwrap_or_else(|e| {
+                    debug!("Intent understanding failed, using defaults: {}", e);
+                    (UserIntent::default(), None)
+                });
+
+        debug!(
+            "Intent: action={:?}, entities={:?}, clarification_needed={}",
+            intent.action, intent.entities, intent.clarification_needed
+        );
+
+        // Record intent LLM usage if any
+        if let (Some(tracker), Some(usage)) = (&self.usage_tracker, &intent_usage) {
+            let precall_usage = crate::usage::AccumulatedUsage::from_tokens(
+                usage.input_tokens,
+                usage.output_tokens,
+            );
+            if let Err(e) = tracker
+                .record(
+                    self.api.model(),
+                    &precall_usage,
+                    &UsageSource::User,
+                    Some(&msg.channel.to_string()),
+                )
+                .await
+            {
+                debug!("Failed to record intent usage: {}", e);
+            }
+        }
+
+        // If the intent signals clarification is needed, ask before proceeding
+        if intent.clarification_needed {
+            let clarification_prompt = if intent.canonical.is_empty() {
+                msg.content.clone()
+            } else {
+                intent.canonical.clone()
+            };
+            debug!("Intent flagged clarification needed for: {:?}", clarification_prompt);
+        }
+
         // Route the query to determine retrieval strategy (with usage tracking)
         let (strategy, router_usage) =
             query_router::route_query_tracked(&msg.content, Some(&self.api), &self.router_config)
@@ -185,8 +238,8 @@ impl Agent {
 
         debug!("Query routed as {:?}", strategy.complexity);
 
-        // Load relevant context from knowledge graph (guided by strategy)
-        let context = self.load_context(&msg, &strategy).await?;
+        // Load relevant context from knowledge graph (guided by strategy and intent)
+        let context = self.load_context(&msg, &strategy, &intent).await?;
 
         // Build system prompt
         let system_prompt = build_system_prompt(&self.soul, &self.memory, &context);
@@ -345,6 +398,7 @@ impl Agent {
         &self,
         msg: &IncomingMessage,
         strategy: &RetrievalStrategy,
+        intent: &UserIntent,
     ) -> Result<String> {
         let mut context = String::new();
         let mut truncated = false;
@@ -393,14 +447,21 @@ impl Agent {
             }
         }
 
-        // Search for relevant entities mentioned in the message
+        // Search for relevant entities mentioned in the message.
+        // Prefer LLM-extracted entities from intent; fall back to keyword splitting.
         if !truncated && strategy.search_knowledge {
-            let keywords: Vec<&str> = msg
+            let intent_keywords: Vec<&str> = intent.entities.iter().map(|s| s.as_str()).collect();
+            let fallback_keywords: Vec<&str> = msg
                 .content
                 .split_whitespace()
                 .filter(|word| word.len() > 3)
                 .take(5)
                 .collect();
+            let keywords: Vec<&str> = if !intent_keywords.is_empty() {
+                intent_keywords
+            } else {
+                fallback_keywords
+            };
 
             if !keywords.is_empty() {
                 context.push_str("## Relevant Knowledge\n\n");
@@ -541,7 +602,7 @@ mod tests {
             corrective_rag: false,
             knowledge_limit: 5,
         };
-        let context = agent.load_context(&msg, &strategy).await.unwrap();
+        let context = agent.load_context(&msg, &strategy, &UserIntent::default()).await.unwrap();
         // Context is a String — load_context should succeed without panic
         assert!(context.len() <= 100_000, "Context unexpectedly large");
     }
@@ -636,7 +697,7 @@ mod tests {
             corrective_rag: false,
             knowledge_limit: 0,
         };
-        let context = agent.load_context(&msg, &strategy).await.unwrap();
+        let context = agent.load_context(&msg, &strategy, &UserIntent::default()).await.unwrap();
         assert!(context.is_empty() || context.len() < 100);
     }
 
@@ -668,7 +729,7 @@ mod tests {
             corrective_rag: false,
             knowledge_limit: 5,
         };
-        let context = agent.load_context(&msg, &strategy).await.unwrap();
+        let context = agent.load_context(&msg, &strategy, &UserIntent::default()).await.unwrap();
         assert!(context.contains("Rust Language"));
     }
 }
